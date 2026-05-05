@@ -18,7 +18,7 @@ Parse successful.
   tenant_id:       INTEGRIS_BAPTIST
   message_type:    ADT^A01^ADT_A01
   feed_type:       ADT
-  message_id:      07808840-fce3-49b5-92df-16a221863853
+  message_id:      fdbda432-1ad2-4aa7-bc6e-f4c724293907
   control_id:      MSG20240315082301
   message_ts:      2024-03-15T08:23:01
   raw_payload len: 1827 chars
@@ -26,11 +26,17 @@ Parse successful.
 
 **What this demonstrates:**
 
-The parser extracts envelope metadata from the MSH segment (message type, control ID, timestamp) and tenant identification from the custom ZTN segment. The full 1,827-character raw payload is preserved exactly as received — no clinical content is touched at this stage.
+The parser extracts envelope metadata from the MSH segment (message type, control ID,
+timestamp) and tenant identification from the custom ZTN segment. The full raw payload
+is preserved exactly as received — no clinical content is touched at this stage.
 
-The ZTN segment (`TENANT_ID=INTEGRIS_BAPTIST`) drives tenant assignment. If ZTN were absent, the parser falls back to MSH.4 (sending facility), then to a configured default. This ensures every Bronze record has a tenant_id regardless of whether the source interface engine appends the custom segment.
+The ZTN segment (`TENANT_ID=INTEGRIS_BAPTIST`) drives tenant assignment. If ZTN were
+absent, the parser falls back to MSH.4 (sending facility), then to a configured
+default. This ensures every Bronze record has a tenant_id regardless of whether the
+source interface engine appends the custom segment.
 
-The ORU^R01 lab result message (`hl7_oru_sample.txt`) parses identically, with `feed_type=ORU` extracted from MSH.9.
+The ORU^R01 lab result message (`hl7_oru_sample.txt`) parses identically, with
+`feed_type=ORU` extracted from MSH.9.
 
 ---
 
@@ -47,16 +53,25 @@ Ingest successful.
   -> Patient                        tenant=INTEGRIS_BAPTIST  status=PENDING
   -> Encounter                      tenant=INTEGRIS_BAPTIST  status=PENDING
   -> Observation                    tenant=INTEGRIS_BAPTIST  status=PENDING
-  -> Condition                      tenant=INTEGRIS_BATMAN   status=PENDING
+  -> Condition                      tenant=INTEGRIS_BAPTIST  status=PENDING
 ```
 
 **What this demonstrates:**
 
-The ingester splits the Bundle into individual resource records — one Bronze row per resource, not per Bundle. This is the correct design for a clinical data platform: Patient, Encounter, Observation, and Condition have different normalization cadences and different downstream consumers. Keeping them as atomic records allows each to be processed, reprocessed, or queried independently.
+The ingester splits the Bundle into individual resource records — one Bronze row per
+resource, not per Bundle. This is the correct design for a clinical data platform:
+Patient, Encounter, Observation, and Condition have different normalization cadences
+and different downstream consumers. Keeping them as atomic records allows each to be
+processed, reprocessed, or queried independently.
 
-Tenant identification is extracted from `Bundle.meta.tag` using the HDU tag system URI. All four resources carry `tenant=INTEGRIS_BAPTIST` inherited from the Bundle envelope. The `bundle_payload` (full Bundle JSON) is attached to the first resource record for audit; subsequent records reference only their own resource payload to avoid row bloat.
+Tenant identification is extracted from `Bundle.meta.tag` using the HDU tag system
+URI. All four resources carry `tenant=INTEGRIS_BAPTIST` inherited from the Bundle
+envelope. The `bundle_payload` (full Bundle JSON) is attached to the first resource
+record for audit; subsequent records reference only their own resource payload to
+avoid row bloat.
 
-`skipped_types: []` confirms that all four resource types in the Bundle (Patient, Encounter, Observation, Condition) are in the supported set and none were dropped.
+`skipped_types: []` confirms that all four resource types in the Bundle (Patient,
+Encounter, Observation, Condition) are in the supported set and none were dropped.
 
 ---
 
@@ -66,29 +81,40 @@ Tenant identification is extracted from `Bundle.meta.tag` using the HDU tag syst
 **Input:** Patient resource from `fhir_bundle_sample.json`
 
 ```
+
 Resolution result:
-  umpi:             c0cdffac-03f8-4cec-b3ab-eeb5d55bf11c
+  umpi:             6ba73876-e000-4b7e-89cf-83e77a28ec90
   match_method:     NEW_RECORD
   match_confidence: 0.0
   is_new_record:    True
   matched_on:       []
 
 Second resolution (should match):
-  umpi:             c0cdffac-03f8-4cec-b3ab-eeb5d55bf11c
+  umpi:             6ba73876-e000-4b7e-89cf-83e77a28ec90
   match_method:     DETERMINISTIC
   is_new_record:    False
   ✓ UMPI consistent across resolutions
 
 Total patients in MPI: 1
+DEBUG MPI new record minted: umpi=6ba73876-e000-4b7e-89cf-83e77a28ec90 tenant=INTEGRIS_BAPTIST
+DEBUG MPI match (identifier system+value): umpi=6ba73876-e000-4b7e-89cf-83e77a28ec90
 ```
 
 **What this demonstrates:**
 
-First pass: Carlos Ramirez arrives from INTEGRIS_BAPTIST with MRN-29471. No prior record exists in the MPI — a new UMPI is minted and all applicable indexes are populated (MRN+NPI index, identifier system+value index, DOB+name+zip index).
+First pass: Carlos Ramirez arrives from INTEGRIS_BAPTIST with MRN-29471. No prior
+record exists in the MPI — a new UMPI is minted and all applicable indexes are
+populated (MRN+NPI index, identifier system+value index, DOB+name+zip index).
 
-Second pass: The same patient identity resolves to the identical UMPI via the identifier system+value index (Pass 2 of the matching hierarchy). `is_new_record=False` and `match_method=DETERMINISTIC` confirm the match is exact and traceable.
+Second pass: The same patient identity resolves to the identical UMPI via the
+identifier system+value index (Pass 2 of the matching hierarchy).
+`is_new_record=False` and `match_method=DETERMINISTIC` confirm the match is exact
+and traceable.
 
-This consistency guarantee — that the same source identity always resolves to the same UMPI — is the foundation of cross-encounter and cross-tenant clinical coherence. Every Silver entity (encounter, diagnosis, lab) written after this step is keyed to `c0cdffac-03f8-4cec-b3ab-eeb5d55bf11c`, not to MRN-29471.
+This consistency guarantee — that the same source identity always resolves to the
+same UMPI — is the foundation of cross-encounter and cross-tenant clinical coherence.
+Every Silver entity (encounter, diagnosis, lab) written after this step is keyed to
+the resolved UMPI, not to MRN-29471.
 
 ---
 
@@ -98,6 +124,7 @@ This consistency guarantee — that the same source identity always resolves to 
 **Input:** Observation resource (HbA1c) from `fhir_bundle_sample.json`
 
 ```
+
 Silver lab record:
   loinc_code:       4548-4
   loinc_display:    Hemoglobin A1c/Hemoglobin.total in Blood
@@ -111,11 +138,22 @@ Silver lab record:
 
 **What this demonstrates:**
 
-The synthetic FHIR bundle sends LOINC 4548-4 directly in the Observation coding — common from Epic and Cerner implementations with mature terminology configuration. The normalizer accepts the source LOINC and records `loinc_map_method=SOURCE_LOINC`, indicating no local mapping was required.
+The synthetic FHIR bundle sends LOINC 4548-4 directly in the Observation coding —
+common from Epic and Cerner implementations with mature terminology configuration.
+The normalizer accepts the source LOINC and records `loinc_map_method=SOURCE_LOINC`,
+indicating no local mapping was required.
 
-The `source_display` field (`HgbA1c`) is preserved alongside the canonical LOINC display (`Hemoglobin A1c/Hemoglobin.total in Blood`). This is what enables retrospective analysis of terminology consistency across tenants: how many different local display strings resolve to the same LOINC code, and which tenants are sending non-standard displays that require terminology service fallback.
+The `source_display` field (`HgbA1c`) is preserved alongside the canonical LOINC
+display (`Hemoglobin A1c/Hemoglobin.total in Blood`). This is what enables
+retrospective analysis of terminology consistency across tenants: how many different
+local display strings resolve to the same LOINC code, and which tenants are sending
+non-standard displays that require terminology service fallback.
 
-One normalization log entry is written regardless of map method. For the terminology service fallback path (simulating an eClinicalWorks CSV where the source sends `"A1c"` with no code system), the log entry records `mapping_method=TERMINOLOGY_SERVICE`. For an unmapped code, it records `mapping_method=UNMAPPED` with `mapping_confidence=0.0`. Nothing is silent.
+One normalization log entry is written regardless of map method. For the terminology
+service fallback path (simulating an eClinicalWorks CSV where the source sends
+`"A1c"` with no code system), the log entry records
+`mapping_method=TERMINOLOGY_SERVICE`. For an unmapped code, it records
+`mapping_method=UNMAPPED` with `mapping_confidence=0.0`. Nothing is silent.
 
 ---
 
@@ -125,8 +163,9 @@ One normalization log entry is written regardless of map method. For the termino
 **Input:** Synthetic Silver entities constructed from the synthetic patient scenario
 
 ```
+
 === Patient Summary ===
-  patient_key:        fa7eaa6f6a5615d6...
+  patient_key:        f3a37c24427a73dd...
   full_name:          Carlos Ramirez
   age:                49
   charlson_index:     2
@@ -137,7 +176,7 @@ One normalization log entry is written regardless of map method. For the termino
   encounters_12m:     0
   attributed_pcp:     None
 
-=== Quality Measure: CDC HbA1c Control (<8.0%) ===
+=== Quality Measure: CDC HbA1c Control ===
   denominator:        True
   numerator:          False
   evidence_value:     8.2%
@@ -151,13 +190,30 @@ One normalization log entry is written regardless of map method. For the termino
 
 **What this demonstrates:**
 
-**Patient Summary:** Carlos Ramirez carries three active diagnoses — AMI (I21.9), Type 2 DM (E11.9), and hypertension (I10). The Charlson Comorbidity Index scores him at 2 (AMI weight 1 + DM without complications weight 1), placing him in the MODERATE risk tier. The chronic condition flags surface correctly from the global ICD-10 value sets: `flag_diabetes=True`, `flag_hypertension=True`, `flag_heart_failure=False`.
+**Patient Summary:** Carlos Ramirez carries three active diagnoses — AMI (I21.9),
+Type 2 DM (E11.9), and hypertension (I10). The Charlson Comorbidity Index scores
+him at 2 (AMI weight 1 + DM without complications weight 1), placing him in the
+MODERATE risk tier. The chronic condition flags surface correctly from the global
+ICD-10 value sets: `flag_diabetes=True`, `flag_hypertension=True`,
+`flag_heart_failure=False`.
 
-The `patient_key` is a SHA-256 hash of the UMPI — what Gold layer consumers (BI tools, analysts) receive instead of the raw identifier. The raw UMPI stays in Silver.
+The `patient_key` is a SHA-256 hash of the UMPI — what Gold layer consumers
+(BI tools, analysts) receive instead of the raw identifier. The raw UMPI stays
+in Silver.
 
-**Quality Measure:** The CDC HbA1c Control measure places Carlos in the denominator (age 18-75, confirmed diabetes diagnosis). His most recent HbA1c of 8.2% fails the `<8.0%` threshold — `numerator=False`. In a provider's HEDIS report, this patient counts against their diabetes control rate. The `evidence_date` and `evidence_value` fields provide the supporting documentation for the measure calculation, enabling audit without re-running the full measure logic.
+**Quality Measure:** The CDC HbA1c Control measure places Carlos in the denominator
+(age 18-75, confirmed diabetes diagnosis). His most recent HbA1c of 8.2% fails the
+`<8.0%` threshold — `numerator=False`. In a provider's HEDIS report, this patient
+counts against their diabetes control rate. The `evidence_date` and `evidence_value`
+fields provide the supporting documentation for the measure calculation, enabling
+audit without re-running the full measure logic.
 
-**ADT Event Feed:** The two-event sequence (A01 admission on 2024-03-15, A03 discharge on 2024-03-18) represents a 3-day inpatient stay. `is_readmission_30d=False` for the admission because there is no prior discharge in the 30-day window. The readmission flag uses `delta.total_seconds()` rather than `delta.days` to correctly handle same-day readmissions where a discharge and re-admission occur within the same calendar day.
+**ADT Event Feed:** The two-event sequence (A01 admission on 2024-03-15, A03
+discharge on 2024-03-18) represents a 3-day inpatient stay. `is_readmission_30d=False`
+for the admission because there is no prior discharge in the 30-day window. The
+readmission flag uses `delta.total_seconds()` rather than `delta.days` to correctly
+handle same-day readmissions where a discharge and re-admission occur within the
+same calendar day.
 
 ---
 
@@ -166,7 +222,7 @@ The `patient_key` is a SHA-256 hash of the UMPI — what Gold layer consumers (B
 **Runner:** `python -m pytest tests/ -v`
 
 ```
-41 passed in 0.11s
+41 passed in 0.09s
 ```
 
 | Test Class | Tests | Coverage |
