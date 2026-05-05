@@ -14,26 +14,60 @@ Read alongside CLAUDE.md and TESTING.md at the start of each new session.
 
 ## Milestone Summary
 
-| Milestone | Status | Completed |
-|---|---|---|
-| M1 — Repository structure and synthetic data | ✅ Complete | Session 1 |
-| M2 — Bronze layer schemas and ingestion scripts | ✅ Complete | Session 1 |
-| M3 — Silver layer CDM schema and normalization | ✅ Complete | Session 1 |
-| M4 — Gold layer analytics and RLS schema | ✅ Complete | Session 1 |
-| M5 — Identity resolution module | ✅ Complete | Session 1 |
-| M6 — Unit test suite (41 tests) | ✅ Complete | Session 1 |
-| M7 — Documentation (architecture, CDM, tenancy, USCDI) | ✅ Complete | Session 1 |
-| M8 — Pipeline runner and results automation | ✅ Complete | Session 1 |
-| M9 — CI/CD (GitHub Actions) | ✅ Complete | Session 1 |
-| M10 — CLAUDE.md / TESTING.md / PROGRESS.md | ✅ Complete | Session 1 |
-| M11 — Blog post (informatiq.ai) | 🔲 Not started | — |
-| M12 — GitHub repo publication | 🔲 Not started | — |
-| M13 — Integration tests | 🔲 Not started | — |
-| M14 — LinkedIn outreach to Katy Decker | 🔲 Not started | — |
+| Milestone | Status |
+|---|---|
+| M1 — Repository structure and synthetic data | ✅ Complete |
+| M2 — Bronze layer schemas and ingestion scripts | ✅ Complete |
+| M3 — Silver layer CDM schema and normalization | ✅ Complete |
+| M4 — Gold layer analytics and RLS schema | ✅ Complete |
+| M5 — Identity resolution module | ✅ Complete |
+| M6 — Unit test suite (41 tests) | ✅ Complete |
+| M7 — Documentation (architecture, CDM, tenancy, USCDI) | ✅ Complete |
+| M8 — Pipeline runner and results automation | ✅ Complete |
+| M9 — CI/CD (GitHub Actions) | ✅ Complete |
+| M10 — CLAUDE.md / TESTING.md / PROGRESS.md | ✅ Complete |
+| M11 — Blog post (informatiq.ai) | 🔲 Not started |
+| M12 — GitHub repo publication | 🔲 Not started |
+| M13 — Integration tests | 🔲 Not started |
+| M14 — LinkedIn outreach to Katy Decker | 🔲 Not started |
 
 ---
 
 ## Session Log
+
+### Session 2 — Repository verification and asset restoration
+**Date:** 2026-05-05
+
+**Completed:**
+
+Full repository asset verification against the CLAUDE.md file checklist (26 files).
+21 of 26 files were present and non-empty. Five files were missing:
+
+- `run_pipeline.py` — absent from working tree; reconstructed from pipeline output
+  in PIPELINE_RESULTS.md and stage script `__main__` blocks
+- `Makefile` — absent from working tree; reconstructed from CLAUDE.md target descriptions
+- `.gitignore` — present as `gitignore` (no leading dot); renamed with `git mv`
+- `.github/workflows/ci.yml` — `.github/` directory did not exist; created
+- `.github/workflows/regenerate-results.yml` — created alongside ci.yml
+
+All five files restored. 41/41 tests passing after restoration. Task 1 committed
+as `chore: verify and restore missing assets`.
+
+PROGRESS.md Milestone Summary table cleaned: "Completed" column removed, session
+annotations removed from Status column. Table is now forward-looking only.
+
+**Issues found:**
+- Five repository assets were missing from the working tree, likely due to an
+  incomplete initial commit when the repo was first set up locally.
+
+**Known gaps carried forward:** (unchanged from Session 1)
+- No integration tests
+- No deployment pipeline
+- Elixhauser Index scaffolded but not implemented
+- Procedures and Immunizations are schema extension points only
+- Terminology service uses static lookup tables
+
+---
 
 ### Session 1 — Initial build
 **Date:** 2026-05-05  
