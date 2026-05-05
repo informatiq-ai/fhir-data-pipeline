@@ -1,0 +1,289 @@
+<svg viewBox="0 0 1100 720" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-bronze" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#b45309"/>
+    </marker>
+    <marker id="arrow-silver" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#475569"/>
+    </marker>
+    <marker id="arrow-gold" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#92400e"/>
+    </marker>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#00000018"/>
+    </filter>
+    <linearGradient id="bg-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </linearGradient>
+    <linearGradient id="bronze-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fef3c7"/>
+      <stop offset="100%" stop-color="#fde68a"/>
+    </linearGradient>
+    <linearGradient id="silver-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f1f5f9"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+    <linearGradient id="gold-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fef9c3"/>
+      <stop offset="100%" stop-color="#fef08a"/>
+    </linearGradient>
+    <linearGradient id="source-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#eff6ff"/>
+      <stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+    <linearGradient id="consumer-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f0fdf4"/>
+      <stop offset="100%" stop-color="#dcfce7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="720" fill="url(#bg-grad)" rx="12"/>
+
+  <!-- Title -->
+  <text x="550" y="42" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a" letter-spacing="-0.5">fhir-data-pipeline</text>
+  <text x="550" y="64" text-anchor="middle" font-size="13" fill="#64748b">High-Level Architecture — Multi-Tenant Clinical Data Platform</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- SOURCE SYSTEMS COLUMN -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="24" y="88" width="168" height="574" rx="10" fill="url(#source-grad)" stroke="#93c5fd" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="108" y="113" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8" letter-spacing="1" text-transform="uppercase">SOURCE SYSTEMS</text>
+
+  <!-- Epic -->
+  <rect x="40" y="126" width="136" height="46" rx="7" fill="white" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="108" y="146" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Epic</text>
+  <text x="108" y="162" text-anchor="middle" font-size="10" fill="#64748b">HL7 v2 · FHIR R4</text>
+
+  <!-- Cerner -->
+  <rect x="40" y="182" width="136" height="46" rx="7" fill="white" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="108" y="202" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Cerner</text>
+  <text x="108" y="218" text-anchor="middle" font-size="10" fill="#64748b">HL7 v2 · FHIR R4</text>
+
+  <!-- Meditech -->
+  <rect x="40" y="238" width="136" height="46" rx="7" fill="white" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="108" y="258" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Meditech</text>
+  <text x="108" y="274" text-anchor="middle" font-size="10" fill="#64748b">HL7 v2</text>
+
+  <!-- Divider -->
+  <line x1="52" y1="300" x2="164" y2="300" stroke="#bfdbfe" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="108" y="318" text-anchor="middle" font-size="10" fill="#64748b" font-style="italic">Closed Vendors</text>
+
+  <!-- eClinicalWorks -->
+  <rect x="40" y="328" width="136" height="46" rx="7" fill="white" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="108" y="348" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">eClinicalWorks</text>
+  <text x="108" y="364" text-anchor="middle" font-size="10" fill="#64748b">Batch CSV · SFTP</text>
+
+  <!-- Athena -->
+  <rect x="40" y="384" width="136" height="46" rx="7" fill="white" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="108" y="404" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Athena</text>
+  <text x="108" y="420" text-anchor="middle" font-size="10" fill="#64748b">Batch CSV · SFTP</text>
+
+  <!-- Tenant badge -->
+  <rect x="52" y="448" width="112" height="24" rx="12" fill="#dbeafe"/>
+  <text x="108" y="464" text-anchor="middle" font-size="10" font-weight="600" fill="#1d4ed8">N Tenants</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- BRONZE LAYER -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="216" y="88" width="184" height="574" rx="10" fill="url(#bronze-grad)" stroke="#d97706" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="308" y="110" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e" letter-spacing="1">🥉  BRONZE LAYER</text>
+  <text x="308" y="126" text-anchor="middle" font-size="10" fill="#b45309">Raw Landing Zone</text>
+
+  <!-- HL7 box -->
+  <rect x="232" y="140" width="152" height="80" rx="7" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="308" y="162" text-anchor="middle" font-size="11" font-weight="700" fill="#92400e">HL7 v2 Messages</text>
+  <text x="308" y="180" text-anchor="middle" font-size="10" fill="#64748b">ADT · ORU · VXU · SIU</text>
+  <text x="308" y="197" text-anchor="middle" font-size="10" fill="#64748b">Real-time stream</text>
+  <text x="308" y="212" text-anchor="middle" font-size="9" fill="#b45309" font-style="italic">hl7_parser.py</text>
+
+  <!-- FHIR box -->
+  <rect x="232" y="234" width="152" height="80" rx="7" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="308" y="256" text-anchor="middle" font-size="11" font-weight="700" fill="#92400e">FHIR R4 Bundles</text>
+  <text x="308" y="274" text-anchor="middle" font-size="10" fill="#64748b">Patient · Encounter</text>
+  <text x="308" y="291" text-anchor="middle" font-size="10" fill="#64748b">Observation · Condition</text>
+  <text x="308" y="306" text-anchor="middle" font-size="9" fill="#b45309" font-style="italic">fhir_ingester.py</text>
+
+  <!-- CSV box -->
+  <rect x="232" y="328" width="152" height="80" rx="7" fill="white" stroke="#f59e0b" stroke-width="1"/>
+  <text x="308" y="350" text-anchor="middle" font-size="11" font-weight="700" fill="#92400e">Flat File Batches</text>
+  <text x="308" y="368" text-anchor="middle" font-size="10" fill="#64748b">CSV · SFTP · Nightly</text>
+  <text x="308" y="385" text-anchor="middle" font-size="10" fill="#64748b">Raw JSONB rows</text>
+  <text x="308" y="400" text-anchor="middle" font-size="9" fill="#b45309" font-style="italic">flat_file_ingester</text>
+
+  <!-- Immutable badge -->
+  <rect x="244" y="432" width="128" height="36" rx="7" fill="#fef3c7" stroke="#d97706" stroke-width="1"/>
+  <text x="308" y="448" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e">Immutable Audit Trail</text>
+  <text x="308" y="462" text-anchor="middle" font-size="9" fill="#b45309">No transforms at ingest</text>
+
+  <rect x="244" y="482" width="128" height="36" rx="7" fill="#fef3c7" stroke="#d97706" stroke-width="1"/>
+  <text x="308" y="498" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e">JSONB / VARIANT</text>
+  <text x="308" y="512" text-anchor="middle" font-size="9" fill="#b45309">Snowflake · Databricks</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- SILVER LAYER -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="424" y="88" width="252" height="574" rx="10" fill="url(#silver-grad)" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="550" y="110" text-anchor="middle" font-size="10" font-weight="700" fill="#334155" letter-spacing="1">🥈  SILVER LAYER</text>
+  <text x="550" y="126" text-anchor="middle" font-size="10" fill="#475569">Canonical Clinical Data Model</text>
+
+  <!-- MPI box -->
+  <rect x="440" y="140" width="220" height="90" rx="7" fill="white" stroke="#94a3b8" stroke-width="1"/>
+  <text x="550" y="162" text-anchor="middle" font-size="11" font-weight="700" fill="#1e293b">① Identity Resolution</text>
+  <text x="550" y="180" text-anchor="middle" font-size="10" fill="#64748b">MRN + NPI · SSN4 + DOB + Name</text>
+  <text x="550" y="197" text-anchor="middle" font-size="10" fill="#64748b">Universal Master Patient Index</text>
+  <text x="550" y="214" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">identity_resolution.py</text>
+
+  <!-- Terminology box -->
+  <rect x="440" y="244" width="220" height="90" rx="7" fill="white" stroke="#94a3b8" stroke-width="1"/>
+  <text x="550" y="266" text-anchor="middle" font-size="11" font-weight="700" fill="#1e293b">② Terminology Normalization</text>
+  <text x="550" y="284" text-anchor="middle" font-size="10" fill="#64748b">LOINC · SNOMED-CT · RxNorm</text>
+  <text x="550" y="301" text-anchor="middle" font-size="10" fill="#64748b">ICD-10-CM · NDC · CVX</text>
+  <text x="550" y="318" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">bronze_to_silver.py</text>
+
+  <!-- CDM entities -->
+  <rect x="440" y="348" width="220" height="130" rx="7" fill="white" stroke="#94a3b8" stroke-width="1"/>
+  <text x="550" y="370" text-anchor="middle" font-size="11" font-weight="700" fill="#1e293b">③ Canonical Data Model</text>
+  <line x1="452" y1="378" x2="648" y2="378" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="478" y="395" font-size="10" fill="#475569">▸ Encounters</text>
+  <text x="478" y="413" font-size="10" fill="#475569">▸ Lab Observations (LOINC)</text>
+  <text x="478" y="431" font-size="10" fill="#475569">▸ Diagnoses (ICD-10 + SNOMED)</text>
+  <text x="478" y="449" font-size="10" fill="#475569">▸ Medications (RxNorm)</text>
+  <text x="478" y="467" font-size="10" fill="#475569">▸ ADT Events</text>
+
+  <!-- Norm log badge -->
+  <rect x="440" y="494" width="220" height="36" rx="7" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+  <text x="550" y="510" text-anchor="middle" font-size="10" font-weight="700" fill="#334155">Normalization Audit Log</text>
+  <text x="550" y="524" text-anchor="middle" font-size="9" fill="#64748b">Every mapping traced to source</text>
+
+  <rect x="440" y="544" width="220" height="36" rx="7" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+  <text x="550" y="560" text-anchor="middle" font-size="10" font-weight="700" fill="#334155">tenant_id on every row</text>
+  <text x="550" y="574" text-anchor="middle" font-size="9" fill="#64748b">Propagated from Bronze</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- GOLD LAYER -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="700" y="88" width="196" height="574" rx="10" fill="url(#gold-grad)" stroke="#ca8a04" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="798" y="110" text-anchor="middle" font-size="10" font-weight="700" fill="#713f12" letter-spacing="1">🥇  GOLD LAYER</text>
+  <text x="798" y="126" text-anchor="middle" font-size="10" fill="#92400e">Analytics &amp; Reporting</text>
+
+  <!-- RLS box -->
+  <rect x="716" y="140" width="164" height="66" rx="7" fill="white" stroke="#ca8a04" stroke-width="1"/>
+  <text x="798" y="162" text-anchor="middle" font-size="11" font-weight="700" fill="#713f12">Row-Level Security</text>
+  <text x="798" y="179" text-anchor="middle" font-size="10" fill="#64748b">Tenant isolation enforced</text>
+  <text x="798" y="196" text-anchor="middle" font-size="9" fill="#92400e">Unity Catalog · Snowflake RLS</text>
+
+  <!-- Patient Summary -->
+  <rect x="716" y="220" width="164" height="66" rx="7" fill="white" stroke="#ca8a04" stroke-width="1"/>
+  <text x="798" y="242" text-anchor="middle" font-size="11" font-weight="700" fill="#713f12">Patient Summary</text>
+  <text x="798" y="259" text-anchor="middle" font-size="10" fill="#64748b">Charlson · Elixhauser</text>
+  <text x="798" y="276" text-anchor="middle" font-size="9" fill="#92400e">Risk stratification</text>
+
+  <!-- Quality Measures -->
+  <rect x="716" y="300" width="164" height="66" rx="7" fill="white" stroke="#ca8a04" stroke-width="1"/>
+  <text x="798" y="322" text-anchor="middle" font-size="11" font-weight="700" fill="#713f12">Quality Measures</text>
+  <text x="798" y="339" text-anchor="middle" font-size="10" fill="#64748b">HEDIS · CMS · State</text>
+  <text x="798" y="356" text-anchor="middle" font-size="9" fill="#92400e">silver_to_gold.py</text>
+
+  <!-- ADT Feed -->
+  <rect x="716" y="380" width="164" height="66" rx="7" fill="white" stroke="#ca8a04" stroke-width="1"/>
+  <text x="798" y="402" text-anchor="middle" font-size="11" font-weight="700" fill="#713f12">ADT Event Feed</text>
+  <text x="798" y="419" text-anchor="middle" font-size="10" fill="#64748b">Care coordination</text>
+  <text x="798" y="436" text-anchor="middle" font-size="9" fill="#92400e">30-day readmission flag</text>
+
+  <!-- USCDI badge -->
+  <rect x="716" y="462" width="164" height="36" rx="7" fill="#fef9c3" stroke="#ca8a04" stroke-width="1"/>
+  <text x="798" y="478" text-anchor="middle" font-size="10" font-weight="700" fill="#713f12">USCDI v3 Export</text>
+  <text x="798" y="494" text-anchor="middle" font-size="9" fill="#92400e">TEFCA · QHIN ready</text>
+
+  <!-- DQ badge -->
+  <rect x="716" y="512" width="164" height="36" rx="7" fill="#fef9c3" stroke="#ca8a04" stroke-width="1"/>
+  <text x="798" y="528" text-anchor="middle" font-size="10" font-weight="700" fill="#713f12">Data Quality Scorecard</text>
+  <text x="798" y="544" text-anchor="middle" font-size="9" fill="#92400e">Per-tenant coverage metrics</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- CONSUMERS COLUMN -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="920" y="88" width="156" height="574" rx="10" fill="url(#consumer-grad)" stroke="#86efac" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="998" y="113" text-anchor="middle" font-size="11" font-weight="700" fill="#166534" letter-spacing="1">CONSUMERS</text>
+
+  <!-- BI Tools -->
+  <rect x="936" y="128" width="124" height="56" rx="7" fill="white" stroke="#86efac" stroke-width="1"/>
+  <text x="998" y="150" text-anchor="middle" font-size="12" font-weight="600" fill="#14532d">BI Tools</text>
+  <text x="998" y="168" text-anchor="middle" font-size="10" fill="#64748b">Power BI · Tableau</text>
+
+  <!-- QHIN -->
+  <rect x="936" y="198" width="124" height="56" rx="7" fill="white" stroke="#86efac" stroke-width="1"/>
+  <text x="998" y="220" text-anchor="middle" font-size="12" font-weight="600" fill="#14532d">QHIN / TEFCA</text>
+  <text x="998" y="238" text-anchor="middle" font-size="10" fill="#64748b">USCDI exchange</text>
+
+  <!-- Care Mgmt -->
+  <rect x="936" y="268" width="124" height="56" rx="7" fill="white" stroke="#86efac" stroke-width="1"/>
+  <text x="998" y="290" text-anchor="middle" font-size="12" font-weight="600" fill="#14532d">Care Management</text>
+  <text x="998" y="308" text-anchor="middle" font-size="10" fill="#64748b">ADT alerting</text>
+
+  <!-- State Reporting -->
+  <rect x="936" y="338" width="124" height="56" rx="7" fill="white" stroke="#86efac" stroke-width="1"/>
+  <text x="998" y="360" text-anchor="middle" font-size="12" font-weight="600" fill="#14532d">State Reporting</text>
+  <text x="998" y="378" text-anchor="middle" font-size="10" fill="#64748b">CMS · Medicaid</text>
+
+  <!-- Pop Health -->
+  <rect x="936" y="408" width="124" height="56" rx="7" fill="white" stroke="#86efac" stroke-width="1"/>
+  <text x="998" y="430" text-anchor="middle" font-size="12" font-weight="600" fill="#14532d">Population Health</text>
+  <text x="998" y="448" text-anchor="middle" font-size="10" fill="#64748b">Risk · Attribution</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- ARROWS: Sources → Bronze -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- Epic → HL7 -->
+  <line x1="176" y1="152" x2="232" y2="175" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrow-bronze)"/>
+  <!-- Cerner → FHIR -->
+  <line x1="176" y1="205" x2="232" y2="270" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrow-bronze)"/>
+  <!-- Meditech → HL7 -->
+  <line x1="176" y1="261" x2="232" y2="195" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrow-bronze)"/>
+  <!-- eCW → CSV -->
+  <line x1="176" y1="352" x2="232" y2="362" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrow-bronze)"/>
+  <!-- Athena → CSV -->
+  <line x1="176" y1="407" x2="232" y2="390" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrow-bronze)"/>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- ARROWS: Bronze → Silver -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <line x1="400" y1="180" x2="440" y2="180" stroke="#475569" stroke-width="2" marker-end="url(#arrow-silver)"/>
+  <line x1="400" y1="274" x2="440" y2="274" stroke="#475569" stroke-width="2" marker-end="url(#arrow-silver)"/>
+  <line x1="400" y1="368" x2="440" y2="368" stroke="#475569" stroke-width="2" marker-end="url(#arrow-silver)"/>
+
+  <!-- Bronze label -->
+  <text x="420" y="244" text-anchor="middle" font-size="9" fill="#64748b" transform="rotate(-90,420,244)">normalize</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- ARROWS: Silver → Gold -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <line x1="660" y1="260" x2="700" y2="260" stroke="#92400e" stroke-width="2" marker-end="url(#arrow-gold)"/>
+  <line x1="660" y1="370" x2="700" y2="330" stroke="#92400e" stroke-width="2" marker-end="url(#arrow-gold)"/>
+  <line x1="660" y1="420" x2="700" y2="410" stroke="#92400e" stroke-width="2" marker-end="url(#arrow-gold)"/>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- ARROWS: Gold → Consumers -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <line x1="896" y1="260" x2="936" y2="156" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="896" y1="330" x2="936" y2="226" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="896" y1="413" x2="936" y2="296" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="896" y1="480" x2="936" y2="366" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="896" y1="530" x2="936" y2="436" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- LEGEND / FOOTNOTE -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <rect x="24" y="676" width="1052" height="32" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+  <circle cx="52" cy="692" r="5" fill="#b45309"/>
+  <text x="64" y="696" font-size="10" fill="#64748b">Real-time (HL7 v2 / FHIR R4)</text>
+  <line x1="200" y1="692" x2="230" y2="692" stroke="#b45309" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="238" y="696" font-size="10" fill="#64748b">Batch (CSV / SFTP)</text>
+  <text x="550" y="696" text-anchor="middle" font-size="10" fill="#94a3b8">Vendor-agnostic · ANSI SQL · Python 3.11+ · Snowflake / Databricks Delta Lake</text>
+  <text x="1020" y="696" text-anchor="end" font-size="10" fill="#94a3b8">informatiq.ai</text>
+</svg>

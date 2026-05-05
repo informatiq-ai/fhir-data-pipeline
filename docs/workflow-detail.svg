@@ -1,0 +1,288 @@
+<svg viewBox="0 0 1100 860" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', system-ui, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#475569"/>
+    </marker>
+    <marker id="arr-ok" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#16a34a"/>
+    </marker>
+    <marker id="arr-err" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#dc2626"/>
+    </marker>
+    <filter id="sh">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#00000015"/>
+    </filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1100" height="860" fill="url(#bg)" rx="12"/>
+
+  <!-- Title -->
+  <text x="550" y="38" text-anchor="middle" font-size="19" font-weight="700" fill="#0f172a" letter-spacing="-0.5">fhir-data-pipeline — Detailed Processing Workflow</text>
+  <text x="550" y="58" text-anchor="middle" font-size="12" fill="#64748b">Step-by-step data flow from source system to analytics-ready Gold layer</text>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- LANE BACKGROUNDS -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+
+  <!-- Ingestion lane -->
+  <rect x="12" y="76" width="1076" height="164" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="22" y="96" font-size="10" font-weight="700" fill="#1d4ed8" letter-spacing="1">INGESTION</text>
+
+  <!-- Bronze lane -->
+  <rect x="12" y="252" width="1076" height="120" rx="8" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+  <text x="22" y="271" font-size="10" font-weight="700" fill="#92400e" letter-spacing="1">BRONZE — RAW LANDING</text>
+
+  <!-- Silver lane -->
+  <rect x="12" y="384" width="1076" height="280" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+  <text x="22" y="403" font-size="10" font-weight="700" fill="#334155" letter-spacing="1">SILVER — CANONICAL CDM</text>
+
+  <!-- Gold lane -->
+  <rect x="12" y="676" width="1076" height="164" rx="8" fill="#fef9c3" stroke="#ca8a04" stroke-width="1"/>
+  <text x="22" y="695" font-size="10" font-weight="700" fill="#713f12" letter-spacing="1">GOLD — ANALYTICS &amp; REPORTING</text>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- INGESTION LANE — nodes -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+
+  <!-- HL7 v2 Stream -->
+  <rect x="32" y="106" width="148" height="114" rx="8" fill="white" stroke="#93c5fd" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="32" y="106" width="148" height="22" rx="8" fill="#1d4ed8"/>
+  <rect x="32" y="120" width="148" height="8" fill="#1d4ed8"/>
+  <text x="106" y="121" text-anchor="middle" font-size="10" font-weight="700" fill="white">HL7 v2 Real-Time</text>
+  <text x="106" y="148" text-anchor="middle" font-size="10" fill="#334155">Interface Engine</text>
+  <text x="106" y="163" text-anchor="middle" font-size="10" fill="#64748b">Rhapsody / Mirth</text>
+  <text x="106" y="178" text-anchor="middle" font-size="10" fill="#64748b">ADT · ORU · VXU</text>
+  <text x="106" y="195" text-anchor="middle" font-size="9" fill="#1d4ed8" font-style="italic">hl7_parser.py</text>
+
+  <!-- FHIR R4 -->
+  <rect x="208" y="106" width="148" height="114" rx="8" fill="white" stroke="#93c5fd" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="208" y="106" width="148" height="22" rx="8" fill="#1d4ed8"/>
+  <rect x="208" y="120" width="148" height="8" fill="#1d4ed8"/>
+  <text x="282" y="121" text-anchor="middle" font-size="10" font-weight="700" fill="white">FHIR R4 Native</text>
+  <text x="282" y="148" text-anchor="middle" font-size="10" fill="#334155">FHIR Server / API</text>
+  <text x="282" y="163" text-anchor="middle" font-size="10" fill="#64748b">Transaction Bundles</text>
+  <text x="282" y="178" text-anchor="middle" font-size="10" fill="#64748b">Per-resource split</text>
+  <text x="282" y="195" text-anchor="middle" font-size="9" fill="#1d4ed8" font-style="italic">fhir_ingester.py</text>
+
+  <!-- Batch CSV -->
+  <rect x="384" y="106" width="148" height="114" rx="8" fill="white" stroke="#93c5fd" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="384" y="106" width="148" height="22" rx="8" fill="#1d4ed8"/>
+  <rect x="384" y="120" width="148" height="8" fill="#1d4ed8"/>
+  <text x="458" y="121" text-anchor="middle" font-size="10" font-weight="700" fill="white">Batch CSV / SFTP</text>
+  <text x="458" y="148" text-anchor="middle" font-size="10" fill="#334155">Nightly File Drop</text>
+  <text x="458" y="163" text-anchor="middle" font-size="10" fill="#64748b">eClinicalWorks</text>
+  <text x="458" y="178" text-anchor="middle" font-size="10" fill="#64748b">Athena · Others</text>
+  <text x="458" y="195" text-anchor="middle" font-size="9" fill="#1d4ed8" font-style="italic">flat_file_ingester</text>
+
+  <!-- Validation diamond -->
+  <polygon points="608,113 660,150 608,187 556,150" fill="white" stroke="#93c5fd" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="608" y="145" text-anchor="middle" font-size="10" font-weight="600" fill="#334155">Structural</text>
+  <text x="608" y="159" text-anchor="middle" font-size="10" font-weight="600" fill="#334155">Validate?</text>
+
+  <!-- Valid → Bronze -->
+  <text x="696" y="136" font-size="9" fill="#16a34a" font-weight="600">PASS</text>
+  <line x1="660" y1="150" x2="740" y2="220" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arr-ok)"/>
+
+  <!-- Invalid → Error -->
+  <text x="612" y="205" font-size="9" fill="#dc2626" font-weight="600">FAIL</text>
+  <rect x="560" y="210" width="96" height="28" rx="6" fill="#fee2e2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="608" y="228" text-anchor="middle" font-size="9" fill="#dc2626">ERROR record</text>
+  <text x="608" y="240" text-anchor="middle" font-size="8" fill="#64748b">status=ERROR</text>
+
+  <!-- Arrows: ingestion → validation -->
+  <line x1="180" y1="163" x2="556" y2="150" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="356" y1="163" x2="556" y2="150" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="532" y1="163" x2="556" y2="150" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ZTN / Tenant extraction -->
+  <rect x="740" y="106" width="156" height="114" rx="8" fill="white" stroke="#93c5fd" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="740" y="106" width="156" height="22" rx="8" fill="#1d4ed8"/>
+  <rect x="740" y="120" width="156" height="8" fill="#1d4ed8"/>
+  <text x="818" y="121" text-anchor="middle" font-size="10" font-weight="700" fill="white">Tenant Extraction</text>
+  <text x="818" y="148" text-anchor="middle" font-size="10" fill="#334155">ZTN segment (HL7)</text>
+  <text x="818" y="163" text-anchor="middle" font-size="10" fill="#334155">meta.tag (FHIR)</text>
+  <text x="818" y="178" text-anchor="middle" font-size="10" fill="#64748b">Assigns tenant_id</text>
+  <text x="818" y="195" text-anchor="middle" font-size="9" fill="#1d4ed8" font-style="italic">→ Bronze row</text>
+
+  <!-- Tenant → Bronze arrow -->
+  <line x1="896" y1="163" x2="960" y2="220" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- BRONZE LANE — nodes -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+
+  <!-- Bronze store -->
+  <rect x="740" y="268" width="320" height="80" rx="8" fill="white" stroke="#d97706" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="900" y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#92400e">bronze.hl7_messages / fhir_resources / flat_file_records</text>
+  <text x="900" y="311" text-anchor="middle" font-size="10" fill="#64748b">Raw payload preserved as TEXT / JSONB · tenant_id · batch_id · received_ts</text>
+  <text x="900" y="329" text-anchor="middle" font-size="10" fill="#64748b">processing_status = PENDING → PROCESSED | ERROR</text>
+
+  <!-- Bronze immutability note -->
+  <rect x="32" y="268" width="260" height="80" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1" stroke-dasharray="5,3"/>
+  <text x="162" y="292" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e">⚖  Immutability Guarantee</text>
+  <text x="162" y="311" text-anchor="middle" font-size="10" fill="#64748b">Raw payload never modified after landing.</text>
+  <text x="162" y="327" text-anchor="middle" font-size="10" fill="#64748b">Silver can replay from Bronze at any time.</text>
+  <text x="162" y="343" text-anchor="middle" font-size="10" fill="#64748b">Legal audit trail for source transmissions.</text>
+
+  <!-- Bronze → Silver trigger -->
+  <line x1="900" y1="348" x2="900" y2="384" stroke="#475569" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arr)"/>
+  <text x="910" y="370" font-size="9" fill="#64748b">batch / stream</text>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- SILVER LANE — nodes -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+
+  <!-- Step 1: MPI -->
+  <rect x="32" y="416" width="196" height="220" rx="8" fill="white" stroke="#94a3b8" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="32" y="416" width="196" height="24" rx="8" fill="#334155"/>
+  <rect x="32" y="430" width="196" height="10" fill="#334155"/>
+  <text x="130" y="431" text-anchor="middle" font-size="10" font-weight="700" fill="white">① Identity Resolution</text>
+  <text x="130" y="458" text-anchor="middle" font-size="10" font-weight="600" fill="#334155">4-Pass Matching Hierarchy</text>
+  <line x1="44" y1="465" x2="216" y2="465" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="44" y="483" font-size="9" fill="#475569">Pass 1 · MRN + Facility NPI</text>
+  <text x="44" y="499" font-size="9" fill="#475569">Pass 2 · Identifier system + value</text>
+  <text x="44" y="515" font-size="9" fill="#475569">Pass 3 · SSN4 + DOB + Family name</text>
+  <text x="44" y="531" font-size="9" fill="#475569">Pass 4 · DOB + Full name + ZIP</text>
+  <line x1="44" y1="540" x2="216" y2="540" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="130" y="557" text-anchor="middle" font-size="10" font-weight="600" fill="#334155">→ UMPI Assigned</text>
+  <text x="130" y="573" text-anchor="middle" font-size="9" fill="#64748b">Match: DETERMINISTIC</text>
+  <text x="130" y="589" text-anchor="middle" font-size="9" fill="#64748b">No match: NEW_RECORD</text>
+  <text x="130" y="610" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">identity_resolution.py</text>
+  <text x="130" y="626" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">→ silver.master_patient_index</text>
+
+  <!-- Arrow: MPI → Terminology -->
+  <line x1="228" y1="526" x2="276" y2="526" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Step 2: Terminology -->
+  <rect x="276" y="416" width="220" height="220" rx="8" fill="white" stroke="#94a3b8" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="276" y="416" width="220" height="24" rx="8" fill="#334155"/>
+  <rect x="276" y="430" width="220" height="10" fill="#334155"/>
+  <text x="386" y="431" text-anchor="middle" font-size="10" font-weight="700" fill="white">② Terminology Normalization</text>
+  <text x="386" y="458" text-anchor="middle" font-size="10" font-weight="600" fill="#334155">Deterministic Lookup Only</text>
+  <line x1="288" y1="465" x2="484" y2="465" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="288" y="483" font-size="9" fill="#475569">Labs   →  LOINC  (4548-4, 2345-7…)</text>
+  <text x="288" y="499" font-size="9" fill="#475569">Dx     →  ICD-10-CM + SNOMED-CT</text>
+  <text x="288" y="515" font-size="9" fill="#475569">Meds   →  RxNorm + NDC</text>
+  <text x="288" y="531" font-size="9" fill="#475569">Imm    →  CVX (extension point)</text>
+  <line x1="288" y1="540" x2="484" y2="540" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="386" y="557" text-anchor="middle" font-size="10" font-weight="600" fill="#334155">Normalization Audit Log</text>
+  <text x="386" y="573" text-anchor="middle" font-size="9" fill="#64748b">SOURCE_LOINC · TERM_SERVICE</text>
+  <text x="386" y="589" text-anchor="middle" font-size="9" fill="#dc2626">UNMAPPED → explicit log entry</text>
+  <text x="386" y="610" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">bronze_to_silver.py</text>
+  <text x="386" y="626" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">→ silver.normalization_log</text>
+
+  <!-- Arrow: Terminology → CDM -->
+  <line x1="496" y1="526" x2="544" y2="526" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Step 3: CDM Write -->
+  <rect x="544" y="416" width="220" height="220" rx="8" fill="white" stroke="#94a3b8" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="544" y="416" width="220" height="24" rx="8" fill="#334155"/>
+  <rect x="544" y="430" width="220" height="10" fill="#334155"/>
+  <text x="654" y="431" text-anchor="middle" font-size="10" font-weight="700" fill="white">③ CDM Schema Alignment</text>
+  <text x="654" y="458" text-anchor="middle" font-size="10" font-weight="600" fill="#334155">Silver Tables Written</text>
+  <line x1="556" y1="465" x2="752" y2="465" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="556" y="483" font-size="9" fill="#475569">▸ master_patient_index (UMPI)</text>
+  <text x="556" y="499" font-size="9" fill="#475569">▸ patient_identifiers (crosswalk)</text>
+  <text x="556" y="515" font-size="9" fill="#475569">▸ encounters</text>
+  <text x="556" y="531" font-size="9" fill="#475569">▸ lab_observations (LOINC)</text>
+  <text x="556" y="547" font-size="9" fill="#475569">▸ diagnoses (ICD-10 + SNOMED)</text>
+  <text x="556" y="563" font-size="9" fill="#475569">▸ medications (RxNorm)</text>
+  <text x="556" y="579" font-size="9" fill="#475569">▸ adt_events</text>
+  <text x="556" y="595" font-size="9" fill="#475569">▸ normalization_log</text>
+  <text x="654" y="626" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">tenant_id on every row</text>
+
+  <!-- Arrow: CDM → Gold trigger -->
+  <line x1="764" y1="526" x2="812" y2="526" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Step 4: Quality checks -->
+  <rect x="812" y="416" width="264" height="220" rx="8" fill="white" stroke="#94a3b8" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="812" y="416" width="264" height="24" rx="8" fill="#334155"/>
+  <rect x="812" y="430" width="264" height="10" fill="#334155"/>
+  <text x="944" y="431" text-anchor="middle" font-size="10" font-weight="700" fill="white">④ Data Quality Validation</text>
+  <text x="944" y="458" text-anchor="middle" font-size="10" font-weight="600" fill="#334155">Per-Tenant Scorecard</text>
+  <line x1="824" y1="465" x2="1064" y2="465" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="824" y="483" font-size="9" fill="#475569">LOINC coverage rate</text>
+  <text x="824" y="499" font-size="9" fill="#475569">ICD-10 coverage rate</text>
+  <text x="824" y="515" font-size="9" fill="#475569">RxNorm coverage rate</text>
+  <text x="824" y="531" font-size="9" fill="#475569">UMPI match rate</text>
+  <text x="824" y="547" font-size="9" fill="#475569">Duplicate records flagged</text>
+  <text x="824" y="563" font-size="9" fill="#475569">Missing DOB / gender count</text>
+  <text x="824" y="579" font-size="9" fill="#475569">Processing error rate</text>
+  <text x="944" y="610" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">→ gold.data_quality_scorecard</text>
+  <text x="944" y="626" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">silver_to_gold.py</text>
+
+  <!-- Silver → Gold arrows -->
+  <line x1="130" y1="636" x2="130" y2="676" stroke="#ca8a04" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="386" y1="636" x2="386" y2="676" stroke="#ca8a04" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="654" y1="636" x2="654" y2="676" stroke="#ca8a04" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="944" y1="636" x2="944" y2="676" stroke="#ca8a04" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- GOLD LANE — nodes -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+
+  <!-- Patient Summary -->
+  <rect x="32" y="708" width="196" height="116" rx="8" fill="white" stroke="#ca8a04" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="32" y="708" width="196" height="22" rx="8" fill="#92400e"/>
+  <rect x="32" y="722" width="196" height="8" fill="#92400e"/>
+  <text x="130" y="722" text-anchor="middle" font-size="10" font-weight="700" fill="white">Patient Summary</text>
+  <text x="44" y="748" font-size="9" fill="#475569">Charlson / Elixhauser indices</text>
+  <text x="44" y="764" font-size="9" fill="#475569">Risk tier (LOW→VERY_HIGH)</text>
+  <text x="44" y="780" font-size="9" fill="#475569">Chronic condition flags</text>
+  <text x="44" y="796" font-size="9" fill="#475569">PCP attribution · Utilization</text>
+  <text x="130" y="816" text-anchor="middle" font-size="9" fill="#92400e" font-style="italic">patient_key (hashed UMPI)</text>
+
+  <!-- Quality Measures -->
+  <rect x="252" y="708" width="196" height="116" rx="8" fill="white" stroke="#ca8a04" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="252" y="708" width="196" height="22" rx="8" fill="#92400e"/>
+  <rect x="252" y="722" width="196" height="8" fill="#92400e"/>
+  <text x="350" y="722" text-anchor="middle" font-size="10" font-weight="700" fill="white">Quality Measures</text>
+  <text x="264" y="748" font-size="9" fill="#475569">CDC HbA1c Control (&lt;8.0%)</text>
+  <text x="264" y="764" font-size="9" fill="#475569">Numerator / Denominator</text>
+  <text x="264" y="780" font-size="9" fill="#475569">Evidence date + value</text>
+  <text x="264" y="796" font-size="9" fill="#475569">HEDIS · CMS · State</text>
+  <text x="350" y="816" text-anchor="middle" font-size="9" fill="#92400e" font-style="italic">silver_to_gold.py</text>
+
+  <!-- ADT Event Feed -->
+  <rect x="472" y="708" width="196" height="116" rx="8" fill="white" stroke="#ca8a04" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="472" y="708" width="196" height="22" rx="8" fill="#92400e"/>
+  <rect x="472" y="722" width="196" height="8" fill="#92400e"/>
+  <text x="570" y="722" text-anchor="middle" font-size="10" font-weight="700" fill="white">ADT Event Feed</text>
+  <text x="484" y="748" font-size="9" fill="#475569">A01 Admit · A03 Discharge</text>
+  <text x="484" y="764" font-size="9" fill="#475569">A02 Transfer · A08 Update</text>
+  <text x="484" y="780" font-size="9" fill="#475569">30-day readmission flag</text>
+  <text x="484" y="796" font-size="9" fill="#475569">Primary Dx · PCP attribution</text>
+  <text x="570" y="816" text-anchor="middle" font-size="9" fill="#92400e" font-style="italic">total_seconds() window</text>
+
+  <!-- RLS + USCDI -->
+  <rect x="692" y="708" width="196" height="116" rx="8" fill="white" stroke="#ca8a04" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="692" y="708" width="196" height="22" rx="8" fill="#92400e"/>
+  <rect x="692" y="722" width="196" height="8" fill="#92400e"/>
+  <text x="790" y="722" text-anchor="middle" font-size="10" font-weight="700" fill="white">RLS + USCDI Export</text>
+  <text x="704" y="748" font-size="9" fill="#475569">Row-level security enforced</text>
+  <text x="704" y="764" font-size="9" fill="#475569">Tenant sees own rows only</text>
+  <text x="704" y="780" font-size="9" fill="#475569">HDU operator: cross-tenant</text>
+  <text x="704" y="796" font-size="9" fill="#475569">USCDI v3 export view</text>
+  <text x="790" y="816" text-anchor="middle" font-size="9" fill="#92400e" font-style="italic">TEFCA · QHIN ready</text>
+
+  <!-- DQ Scorecard -->
+  <rect x="912" y="708" width="164" height="116" rx="8" fill="white" stroke="#ca8a04" stroke-width="1.5" filter="url(#sh)"/>
+  <rect x="912" y="708" width="164" height="22" rx="8" fill="#92400e"/>
+  <rect x="912" y="722" width="164" height="8" fill="#92400e"/>
+  <text x="994" y="722" text-anchor="middle" font-size="10" font-weight="700" fill="white">DQ Scorecard</text>
+  <text x="924" y="748" font-size="9" fill="#475569">LOINC coverage %</text>
+  <text x="924" y="764" font-size="9" fill="#475569">UMPI match rate %</text>
+  <text x="924" y="780" font-size="9" fill="#475569">Error rate per feed</text>
+  <text x="924" y="796" font-size="9" fill="#475569">Per-tenant · Per-date</text>
+  <text x="994" y="816" text-anchor="middle" font-size="9" fill="#92400e" font-style="italic">data_quality_scorecard</text>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- FOOTNOTE -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <rect x="12" y="840" width="1076" height="12" rx="4" fill="#e2e8f0"/>
+  <text x="550" y="850" text-anchor="middle" font-size="9" fill="#94a3b8">Vendor-agnostic · Python 3.11+ · ANSI SQL · Snowflake / Databricks Delta Lake · informatiq.ai</text>
+</svg>
