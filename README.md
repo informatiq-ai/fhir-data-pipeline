@@ -151,6 +151,6 @@ No cloud credentials required to run the ingestion scripts against the synthetic
 
 ## Author
 
-Phil Babbel · Healthcare Data Architect · [informatiq.ai](https://informatiq.ai)
+Phil Johnson · [informatiq.ai](https://informatiq.ai)
 
 15+ years across payer and provider organizations including the VA, IU Health, Anthem, Intermountain Health, and CVS. This reference architecture reflects real patterns encountered normalizing Epic and legacy EHR data onto Cerner's HealtheIntent platform and integrating flat-file batch feeds from closed vendors into enterprise data platforms.
