@@ -1,0 +1,299 @@
+{
+  "resourceType": "Bundle",
+  "id": "bundle-synthetic-001",
+  "meta": {
+    "lastUpdated": "2024-03-15T14:30:22Z",
+    "tag": [
+      {
+        "system": "https://oklahoma-hdu.example.org/tags/tenant",
+        "code": "INTEGRIS_BAPTIST"
+      },
+      {
+        "system": "https://oklahoma-hdu.example.org/tags/source",
+        "code": "FHIR_R4_NATIVE"
+      }
+    ]
+  },
+  "type": "transaction",
+  "timestamp": "2024-03-15T14:30:22Z",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:patient-synthetic-29471",
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-synthetic-29471",
+        "meta": {
+          "profile": [
+            "http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"
+          ]
+        },
+        "identifier": [
+          {
+            "use": "official",
+            "type": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+                  "code": "MR",
+                  "display": "Medical Record Number"
+                }
+              ]
+            },
+            "system": "https://integris-baptist.example.org/mrn",
+            "value": "MRN-29471"
+          }
+        ],
+        "active": true,
+        "name": [
+          {
+            "use": "official",
+            "family": "Ramirez",
+            "given": ["Carlos", "Eduardo"],
+            "prefix": ["Mr."]
+          }
+        ],
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "(405)555-0182",
+            "use": "home"
+          }
+        ],
+        "gender": "male",
+        "birthDate": "1976-12-04",
+        "address": [
+          {
+            "use": "home",
+            "line": ["742 Evergreen Terrace"],
+            "city": "Oklahoma City",
+            "state": "OK",
+            "postalCode": "73102",
+            "country": "USA"
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Patient/patient-synthetic-29471"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:encounter-synthetic-884920",
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "encounter-synthetic-884920",
+        "meta": {
+          "profile": [
+            "http://hl7.org/fhir/us/core/StructureDefinition/us-core-encounter"
+          ]
+        },
+        "identifier": [
+          {
+            "system": "https://integris-baptist.example.org/encounter",
+            "value": "VN-2024-884920"
+          }
+        ],
+        "status": "in-progress",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "IMP",
+          "display": "inpatient encounter"
+        },
+        "type": [
+          {
+            "coding": [
+              {
+                "system": "http://snomed.info/sct",
+                "code": "32485007",
+                "display": "Hospital admission"
+              }
+            ]
+          }
+        ],
+        "subject": {
+          "reference": "Patient/patient-synthetic-29471"
+        },
+        "period": {
+          "start": "2024-03-15T08:20:00Z"
+        },
+        "reasonCode": [
+          {
+            "coding": [
+              {
+                "system": "http://hl7.org/fhir/sid/icd-10-cm",
+                "code": "I21.9",
+                "display": "Acute myocardial infarction, unspecified"
+              }
+            ]
+          }
+        ],
+        "hospitalization": {
+          "admitSource": {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/admit-source",
+                "code": "emd",
+                "display": "From accident/emergency department"
+              }
+            ]
+          }
+        },
+        "location": [
+          {
+            "location": {
+              "display": "3 NORTH, Room 312, Bed A"
+            }
+          }
+        ],
+        "serviceProvider": {
+          "display": "INTEGRIS Baptist Medical Center"
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Encounter/encounter-synthetic-884920"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:obs-synthetic-hba1c-001",
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-synthetic-hba1c-001",
+        "meta": {
+          "profile": [
+            "http://hl7.org/fhir/us/core/StructureDefinition/us-core-observation-lab"
+          ]
+        },
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "laboratory",
+                "display": "Laboratory"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "4548-4",
+              "display": "Hemoglobin A1c/Hemoglobin.total in Blood"
+            }
+          ],
+          "text": "HgbA1c"
+        },
+        "subject": {
+          "reference": "Patient/patient-synthetic-29471"
+        },
+        "encounter": {
+          "reference": "Encounter/encounter-synthetic-884920"
+        },
+        "effectiveDateTime": "2024-03-15T14:30:00Z",
+        "issued": "2024-03-15T14:30:22Z",
+        "valueQuantity": {
+          "value": 8.2,
+          "unit": "%",
+          "system": "http://unitsofmeasure.org",
+          "code": "%"
+        },
+        "interpretation": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation",
+                "code": "H",
+                "display": "High"
+              }
+            ]
+          }
+        ],
+        "referenceRange": [
+          {
+            "low": {
+              "value": 4.8,
+              "unit": "%"
+            },
+            "high": {
+              "value": 5.6,
+              "unit": "%"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Observation/obs-synthetic-hba1c-001"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:condition-synthetic-ami-001",
+      "resource": {
+        "resourceType": "Condition",
+        "id": "condition-synthetic-ami-001",
+        "meta": {
+          "profile": [
+            "http://hl7.org/fhir/us/core/StructureDefinition/us-core-condition"
+          ]
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "encounter-diagnosis",
+                "display": "Encounter Diagnosis"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://hl7.org/fhir/sid/icd-10-cm",
+              "code": "I21.9",
+              "display": "Acute myocardial infarction, unspecified"
+            },
+            {
+              "system": "http://snomed.info/sct",
+              "code": "57054005",
+              "display": "Acute myocardial infarction"
+            }
+          ],
+          "text": "Acute MI"
+        },
+        "subject": {
+          "reference": "Patient/patient-synthetic-29471"
+        },
+        "encounter": {
+          "reference": "Encounter/encounter-synthetic-884920"
+        },
+        "onsetDateTime": "2024-03-15T08:00:00Z",
+        "recordedDate": "2024-03-15T08:23:01Z"
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Condition/condition-synthetic-ami-001"
+      }
+    }
+  ]
+}

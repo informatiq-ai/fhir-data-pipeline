@@ -1,0 +1,465 @@
+"""
+tests/test_transforms.py
+
+Unit tests for ingestion and transform logic.
+Runs against synthetic data — no database connection required.
+
+Run with: python -m pytest tests/ -v
+"""
+
+import json
+import os
+import sys
+import uuid
+from datetime import date
+
+# Add project root to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+import pytest
+
+from ingestion.hl7_parser import (
+    parse_hl7_message,
+    parse_hl7_batch,
+    extract_msh_fields,
+    extract_ztn_fields,
+    parse_hl7_timestamp,
+)
+from ingestion.fhir_ingester import (
+    ingest_fhir_bundle,
+    extract_tenant_from_meta,
+)
+from transforms.identity_resolution import (
+    MPIIndex,
+    PatientIdentity,
+    fhir_patient_to_identity,
+)
+from transforms.bronze_to_silver import (
+    TerminologyService,
+    normalize_fhir_observation,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+SYNTHETIC_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "synthetic")
+
+
+@pytest.fixture
+def hl7_adt_raw():
+    path = os.path.join(SYNTHETIC_DIR, "hl7_adt_sample.txt")
+    with open(path) as f:
+        return f.read()
+
+
+@pytest.fixture
+def hl7_oru_raw():
+    path = os.path.join(SYNTHETIC_DIR, "hl7_oru_sample.txt")
+    with open(path) as f:
+        return f.read()
+
+
+@pytest.fixture
+def fhir_bundle_raw():
+    path = os.path.join(SYNTHETIC_DIR, "fhir_bundle_sample.json")
+    with open(path) as f:
+        return f.read()
+
+
+@pytest.fixture
+def fhir_bundle_dict(fhir_bundle_raw):
+    return json.loads(fhir_bundle_raw)
+
+
+@pytest.fixture
+def terminology():
+    return TerminologyService()
+
+
+@pytest.fixture
+def mpi():
+    return MPIIndex()
+
+
+# ---------------------------------------------------------------------------
+# HL7 Parser tests
+# ---------------------------------------------------------------------------
+
+class TestHL7Timestamp:
+    def test_full_timestamp(self):
+        result = parse_hl7_timestamp("20240315082301")
+        assert result == "2024-03-15T08:23:01"
+
+    def test_date_only(self):
+        result = parse_hl7_timestamp("20240315")
+        assert result == "2024-03-15T00:00:00"
+
+    def test_empty_string(self):
+        assert parse_hl7_timestamp("") is None
+
+    def test_none(self):
+        assert parse_hl7_timestamp(None) is None
+
+    def test_with_timezone_offset(self):
+        # Should strip timezone offset before parsing
+        result = parse_hl7_timestamp("20240315082301+0500")
+        assert result is not None
+        assert "2024-03-15" in result
+
+
+class TestHL7Parser:
+    def test_parse_adt_success(self, hl7_adt_raw):
+        result = parse_hl7_message(hl7_adt_raw)
+        assert result.success is True
+        assert result.record is not None
+        assert result.error is None
+
+    def test_adt_tenant_from_ztn(self, hl7_adt_raw):
+        result = parse_hl7_message(hl7_adt_raw)
+        assert result.record.tenant_id == "INTEGRIS_BAPTIST"
+
+    def test_adt_message_type(self, hl7_adt_raw):
+        result = parse_hl7_message(hl7_adt_raw)
+        assert result.record.message_type is not None
+        assert "ADT" in result.record.message_type
+
+    def test_adt_feed_type(self, hl7_adt_raw):
+        result = parse_hl7_message(hl7_adt_raw)
+        assert result.record.feed_type == "ADT"
+
+    def test_raw_payload_preserved(self, hl7_adt_raw):
+        result = parse_hl7_message(hl7_adt_raw)
+        assert result.record.raw_payload == hl7_adt_raw
+
+    def test_parse_oru_success(self, hl7_oru_raw):
+        result = parse_hl7_message(hl7_oru_raw)
+        assert result.success is True
+        assert result.record.feed_type == "ORU"
+
+    def test_malformed_message_returns_error_record(self):
+        malformed = "NOT_A_VALID_HL7_MESSAGE"
+        result = parse_hl7_message(malformed)
+        assert result.success is False
+        assert result.error is not None
+        assert result.raw_payload == malformed  # raw always preserved
+
+    def test_batch_with_one_malformed(self, hl7_adt_raw):
+        messages = [hl7_adt_raw, "MALFORMED"]
+        successes, failures = parse_hl7_batch(messages)
+        # Both land in Bronze — malformed gets processing_status=ERROR
+        assert len(successes) == 2
+        assert len(failures) == 1
+        error_records = [r for r in successes if r.processing_status == "ERROR"]
+        assert len(error_records) == 1
+
+    def test_default_tenant_fallback(self, hl7_adt_raw):
+        # Strip ZTN segment to test fallback
+        lines = hl7_adt_raw.strip().splitlines()
+        no_ztn = "\n".join(l for l in lines if not l.startswith("ZTN"))
+        result = parse_hl7_message(no_ztn, default_tenant_id="TEST_TENANT")
+        assert result.success is True
+        assert result.record.tenant_id == "TEST_TENANT"
+
+
+# ---------------------------------------------------------------------------
+# FHIR Ingester tests
+# ---------------------------------------------------------------------------
+
+class TestFHIRIngester:
+    def test_ingest_bundle_success(self, fhir_bundle_raw):
+        result = ingest_fhir_bundle(fhir_bundle_raw)
+        assert result.success is True
+        assert result.resource_count > 0
+
+    def test_ingest_produces_one_record_per_resource(self, fhir_bundle_dict):
+        result = ingest_fhir_bundle(fhir_bundle_dict)
+        # Synthetic bundle has: Patient, Encounter, Observation, Condition
+        assert result.resource_count == 4
+
+    def test_tenant_extracted_from_meta_tag(self, fhir_bundle_raw):
+        result = ingest_fhir_bundle(fhir_bundle_raw)
+        for record in result.records:
+            assert record.tenant_id == "INTEGRIS_BAPTIST"
+
+    def test_raw_payload_is_valid_json(self, fhir_bundle_raw):
+        result = ingest_fhir_bundle(fhir_bundle_raw)
+        for record in result.records:
+            parsed = json.loads(record.raw_payload)
+            assert "resourceType" in parsed
+
+    def test_raw_payload_is_resource_not_bundle(self, fhir_bundle_raw):
+        result = ingest_fhir_bundle(fhir_bundle_raw)
+        for record in result.records:
+            parsed = json.loads(record.raw_payload)
+            assert parsed["resourceType"] != "Bundle"
+            assert parsed["resourceType"] == record.fhir_resource_type
+
+    def test_bundle_payload_only_on_first_record(self, fhir_bundle_raw):
+        result = ingest_fhir_bundle(fhir_bundle_raw, store_full_bundle=True)
+        assert result.records[0].bundle_payload is not None
+        for record in result.records[1:]:
+            assert record.bundle_payload is None
+
+    def test_invalid_json_returns_error_record(self):
+        result = ingest_fhir_bundle("{not valid json}")
+        assert result.success is False
+        assert len(result.records) == 1
+        assert result.records[0].processing_status == "ERROR"
+
+    def test_non_bundle_resource_type_fails(self):
+        patient = {"resourceType": "Patient", "id": "test"}
+        result = ingest_fhir_bundle(patient)
+        assert result.success is False
+
+
+# ---------------------------------------------------------------------------
+# Identity Resolution tests
+# ---------------------------------------------------------------------------
+
+class TestMPIIndex:
+    def _make_identity(self, **kwargs) -> PatientIdentity:
+        defaults = dict(
+            tenant_id="TEST_TENANT",
+            source_table="bronze.fhir_resources",
+            source_id=str(uuid.uuid4()),
+            source_mrn="MRN-001",
+            source_facility_npi="NPI-0000000001",
+            source_identifier_system="https://test.example.org/mrn",
+            family_name="Smith",
+            given_name="John",
+            birth_date=date(1980, 1, 15),
+            gender="male",
+            postal_code="73102",
+            ssn_last4="1234",
+        )
+        defaults.update(kwargs)
+        return PatientIdentity(**defaults)
+
+    def test_new_patient_gets_umpi(self, mpi):
+        identity = self._make_identity()
+        result = mpi.resolve(identity)
+        assert result.is_new_record is True
+        assert result.umpi is not None
+        assert result.match_method == "NEW_RECORD"
+
+    def test_same_mrn_npi_matches(self, mpi):
+        identity = self._make_identity()
+        result1 = mpi.resolve(identity)
+        result2 = mpi.resolve(identity)
+        assert result1.umpi == result2.umpi
+        assert result2.is_new_record is False
+        assert result2.match_method == "DETERMINISTIC"
+
+    def test_different_mrn_different_umpi(self, mpi):
+        identity1 = self._make_identity(source_mrn="MRN-001", ssn_last4="1111")
+        # Genuinely different patient: different MRN, NPI, SSN4, name, DOB, zip
+        identity2 = self._make_identity(
+            source_mrn="MRN-999",
+            source_facility_npi="NPI-9999999999",
+            source_identifier_system="https://other.example.org/mrn",
+            source_id=str(uuid.uuid4()),
+            family_name="Johnson",
+            given_name="Mary",
+            birth_date=date(1990, 6, 20),
+            postal_code="73103",
+            ssn_last4="9999",
+        )
+        result1 = mpi.resolve(identity1)
+        result2 = mpi.resolve(identity2)
+        assert result1.umpi != result2.umpi
+
+    def test_ssn4_dob_name_match(self, mpi):
+        # First record comes in with MRN
+        identity1 = self._make_identity(source_mrn="MRN-001", ssn_last4="5678")
+        result1 = mpi.resolve(identity1)
+
+        # Second record — same patient, different MRN (different facility), same SSN4+DOB+name
+        identity2 = self._make_identity(
+            source_mrn="MRN-999-OTHERFACILITY",
+            source_facility_npi="NPI-9999999999",
+            source_identifier_system="https://other-hospital.example.org/mrn",
+            source_id=str(uuid.uuid4()),
+            ssn_last4="5678",
+        )
+        result2 = mpi.resolve(identity2)
+        assert result1.umpi == result2.umpi
+
+    def test_patient_count_increments(self, mpi):
+        assert mpi.patient_count == 0
+        mpi.resolve(self._make_identity(source_mrn="MRN-A", ssn_last4="1111"))
+        assert mpi.patient_count == 1
+        mpi.resolve(self._make_identity(
+            source_mrn="MRN-B",
+            source_facility_npi="NPI-8888888888",
+            source_identifier_system="https://other.example.org/mrn",
+            source_id=str(uuid.uuid4()),
+            family_name="Williams",
+            given_name="Sara",
+            birth_date=date(1985, 3, 10),
+            postal_code="73104",
+            ssn_last4="2222",
+        ))
+        assert mpi.patient_count == 2
+
+    def test_fhir_patient_to_identity(self, fhir_bundle_dict, mpi):
+        for entry in fhir_bundle_dict.get("entry", []):
+            resource = entry.get("resource", {})
+            if resource.get("resourceType") != "Patient":
+                continue
+
+            identity = fhir_patient_to_identity(
+                resource=resource,
+                tenant_id="INTEGRIS_BAPTIST",
+                source_table="bronze.fhir_resources",
+                source_id="test-source-id",
+            )
+            assert identity.family_name == "Ramirez"
+            assert identity.given_name == "Carlos"
+            assert identity.birth_date == date(1976, 12, 4)
+            assert identity.gender == "male"
+            assert identity.postal_code == "73102"
+
+
+# ---------------------------------------------------------------------------
+# Terminology service tests
+# ---------------------------------------------------------------------------
+
+class TestTerminologyService:
+    def test_loinc_map_exact_match(self, terminology):
+        result = terminology.map_loinc("HbA1c")
+        assert result is not None
+        assert result[0] == "4548-4"
+
+    def test_loinc_map_case_insensitive(self, terminology):
+        assert terminology.map_loinc("HGBA1C") == terminology.map_loinc("hgba1c")
+
+    def test_loinc_map_a1c_alias(self, terminology):
+        # "A1c" is a common alias in eClinicalWorks CSV exports
+        result = terminology.map_loinc("A1c")
+        assert result is not None
+        assert result[0] == "4548-4"
+
+    def test_loinc_unmapped_returns_none(self, terminology):
+        result = terminology.map_loinc("SOME_CUSTOM_LOCAL_CODE_XYZZY")
+        assert result is None
+
+    def test_rxnorm_metformin(self, terminology):
+        result = terminology.map_rxnorm("metformin")
+        assert result is not None
+        assert "metformin" in result[1].lower()
+
+    def test_rxnorm_unmapped_returns_none(self, terminology):
+        result = terminology.map_rxnorm("DRUG_NOT_IN_TABLE")
+        assert result is None
+
+    def test_snomed_from_icd10(self, terminology):
+        result = terminology.map_snomed_from_icd10("I21.9")
+        assert result is not None
+        assert result[0] == "57054005"
+
+    def test_snomed_unmapped_returns_none(self, terminology):
+        result = terminology.map_snomed_from_icd10("Z99.999")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Bronze → Silver normalization tests
+# ---------------------------------------------------------------------------
+
+class TestNormalizeFHIRObservation:
+    def _get_observations(self, bundle_dict: dict) -> list[dict]:
+        return [
+            e["resource"] for e in bundle_dict.get("entry", [])
+            if e.get("resource", {}).get("resourceType") == "Observation"
+        ]
+
+    def test_normalize_hba1c_loinc_from_source(self, fhir_bundle_dict, terminology):
+        """Synthetic bundle sends LOINC code directly — should be accepted as SOURCE_LOINC."""
+        observations = self._get_observations(fhir_bundle_dict)
+        assert len(observations) > 0
+
+        record, norm_log = normalize_fhir_observation(
+            resource=observations[0],
+            tenant_id="INTEGRIS_BAPTIST",
+            umpi=str(uuid.uuid4()),
+            source_id="test-source-id",
+            terminology=terminology,
+        )
+        assert record.loinc_mapped is True
+        assert record.loinc_code == "4548-4"
+        assert record.loinc_map_method == "SOURCE_LOINC"
+
+    def test_normalize_produces_norm_log_entry(self, fhir_bundle_dict, terminology):
+        observations = self._get_observations(fhir_bundle_dict)
+        _, norm_log = normalize_fhir_observation(
+            resource=observations[0],
+            tenant_id="INTEGRIS_BAPTIST",
+            umpi=str(uuid.uuid4()),
+            source_id="test-source-id",
+            terminology=terminology,
+        )
+        assert len(norm_log) >= 1
+        entry = norm_log[0]
+        assert entry["mapping_type"] == "LOINC_MAP"
+        assert entry["tenant_id"] == "INTEGRIS_BAPTIST"
+
+    def test_normalize_value_quantity(self, fhir_bundle_dict, terminology):
+        observations = self._get_observations(fhir_bundle_dict)
+        record, _ = normalize_fhir_observation(
+            resource=observations[0],
+            tenant_id="INTEGRIS_BAPTIST",
+            umpi=str(uuid.uuid4()),
+            source_id="test-source-id",
+            terminology=terminology,
+        )
+        assert record.value_quantity == 8.2
+        assert record.value_unit == "%"
+
+    def test_unmapped_loinc_still_produces_record(self, terminology):
+        """An unmapped observation should still produce a Silver record with loinc_mapped=False."""
+        resource = {
+            "resourceType": "Observation",
+            "status": "final",
+            "code": {
+                "coding": [{"system": "LOCAL", "code": "CUSTOM-001", "display": "Custom Local Lab"}],
+                "text": "Custom Local Lab"
+            },
+            "valueQuantity": {"value": 42.0, "code": "mg/dL", "unit": "mg/dL"},
+        }
+        record, norm_log = normalize_fhir_observation(
+            resource=resource,
+            tenant_id="TEST_TENANT",
+            umpi=str(uuid.uuid4()),
+            source_id="test-id",
+            terminology=terminology,
+        )
+        assert record.loinc_mapped is False
+        assert record.loinc_map_method == "UNMAPPED"
+        assert record.value_quantity == 42.0
+        # Norm log should record the UNMAPPED attempt
+        unmapped_entries = [e for e in norm_log if e["mapping_method"] == "UNMAPPED"]
+        assert len(unmapped_entries) == 1
+
+    def test_terminology_service_fallback_for_local_display(self, terminology):
+        """Simulate eClinicalWorks-style CSV where code system is LOCAL but display is mappable."""
+        resource = {
+            "resourceType": "Observation",
+            "status": "final",
+            "code": {
+                "coding": [{"system": "LOCAL", "code": "A1C", "display": "A1c"}],
+                "text": "A1c"
+            },
+            "valueQuantity": {"value": 7.1, "code": "%", "unit": "%"},
+        }
+        record, norm_log = normalize_fhir_observation(
+            resource=resource,
+            tenant_id="ECLINICALWORKS_TENANT",
+            umpi=str(uuid.uuid4()),
+            source_id="csv-row-id",
+            terminology=terminology,
+        )
+        assert record.loinc_mapped is True
+        assert record.loinc_code == "4548-4"
+        assert record.loinc_map_method == "TERMINOLOGY_SERVICE"
