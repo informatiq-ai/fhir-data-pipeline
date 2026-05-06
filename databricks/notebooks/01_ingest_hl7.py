@@ -2,16 +2,25 @@
 # MAGIC %md
 # MAGIC # 01 — Ingest HL7 v2 (Bronze)
 # MAGIC
-# MAGIC **Purpose:** Read synthetic HL7 v2 ADT and ORU messages, parse them using the
+# MAGIC **Purpose:** Read HL7 v2 ADT and ORU messages from four source files (both
+# MAGIC single-message samples and volume batch files), parse them using the
 # MAGIC `ingestion/hl7_parser.py` logic, and land one row per message in the Bronze
 # MAGIC Delta table. Every message lands — parse failures produce `processing_status=ERROR`
-# MAGIC rows, never silent drops.
+# MAGIC rows, never silent drops. Post-parse validation issues are captured in a
+# MAGIC structured `audit_validation_errors` table with error codes.
 # MAGIC
 # MAGIC **Writes to:**
-# MAGIC - `dev.fhir_bronze.hl7_messages`
-# MAGIC - `dev.fhir_bronze.audit_ingest_log`
+# MAGIC - `dev.fhir_bronze.hl7_messages`          — one row per message
+# MAGIC - `dev.fhir_bronze.audit_validation_errors` — structured DQ issues per message
+# MAGIC - `dev.fhir_bronze.audit_ingest_log`       — one row per source file
 # MAGIC
-# MAGIC **Run order:** This is notebook 01 of 05. Run before `02_ingest_fhir.py`.
+# MAGIC **Source files processed:**
+# MAGIC - `data/synthetic/hl7_adt_sample.txt`  — single ADT^A01 sample (1 message)
+# MAGIC - `data/synthetic/hl7_oru_sample.txt`  — single ORU^R01 sample (1 message)
+# MAGIC - `data/synthetic/hl7_adt_batch.txt`   — volume ADT batch (1000 messages)
+# MAGIC - `data/synthetic/hl7_oru_batch.txt`   — volume ORU batch (500 messages)
+# MAGIC
+# MAGIC **Run order:** This is notebook 01 of 04. Run before `02_ingest_fhir.py`.
 
 # COMMAND ----------
 
@@ -29,12 +38,14 @@ CATALOG           = "dev"
 SCHEMA            = "fhir_bronze"
 TARGET_TABLE      = f"{CATALOG}.{SCHEMA}.hl7_messages"
 AUDIT_TABLE       = f"{CATALOG}.{SCHEMA}.audit_ingest_log"
+VALIDATION_TABLE  = f"{CATALOG}.{SCHEMA}.audit_validation_errors"
 NOTEBOOK_NAME     = "01_ingest_hl7"
 INGESTION_VERSION = "1.0.0"
 
-print(f"pipeline_run_id : {pipeline_run_id}")
-print(f"target_table    : {TARGET_TABLE}")
-print(f"audit_table     : {AUDIT_TABLE}")
+print(f"pipeline_run_id   : {pipeline_run_id}")
+print(f"target_table      : {TARGET_TABLE}")
+print(f"audit_table       : {AUDIT_TABLE}")
+print(f"validation_table  : {VALIDATION_TABLE}")
 
 # COMMAND ----------
 
@@ -59,7 +70,7 @@ print(f"REPO_ROOT: {REPO_ROOT}")
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from ingestion.hl7_parser import parse_hl7_message
+from ingestion.hl7_parser import parse_hl7_batch, parse_hl7_timestamp
 
 print("hl7_parser imported successfully")
 
@@ -107,112 +118,283 @@ spark.sql(f"""
         pipeline_run_id     STRING      NOT NULL COMMENT 'UUID linking to the notebook run',
         notebook_name       STRING      NOT NULL COMMENT 'Notebook that wrote this row',
         target_table        STRING      NOT NULL COMMENT 'Fully-qualified Delta table written to',
-        source_path         STRING      COMMENT 'Source file path(s) or table name',
-        started_at          TIMESTAMP   NOT NULL COMMENT 'UTC timestamp when notebook started',
-        completed_at        TIMESTAMP   COMMENT 'UTC timestamp when notebook finished',
-        records_attempted   LONG        COMMENT 'Total records parsed or read',
-        records_succeeded   LONG        COMMENT 'Records written successfully',
-        records_failed      LONG        COMMENT 'Records that produced ERROR rows',
+        source_path         STRING      COMMENT 'Source file path',
+        started_at          TIMESTAMP   NOT NULL COMMENT 'UTC timestamp when file processing started',
+        completed_at        TIMESTAMP   COMMENT 'UTC timestamp when file processing finished',
+        records_attempted   LONG        COMMENT 'Total messages parsed from this file',
+        records_succeeded   LONG        COMMENT 'Messages written with PENDING status',
+        records_failed      LONG        COMMENT 'Messages written with ERROR status',
         status              STRING      NOT NULL COMMENT 'COMPLETED | PARTIAL | FAILED',
         error_detail        STRING      COMMENT 'Top-level exception message if status = FAILED',
         ingestion_version   STRING      COMMENT 'Pipeline version',
         created_ts          TIMESTAMP   NOT NULL COMMENT 'Row insert timestamp'
     )
     USING DELTA
-    COMMENT 'Audit log for all ingestion notebook runs across notebooks 01 and 02.'
+    COMMENT 'Audit log — one row per source file per notebook run.'
     TBLPROPERTIES (
         'delta.enableChangeDataFeed' = 'true',
         'delta.autoOptimize.optimizeWrite' = 'true'
     )
 """)
 
-print(f"Tables verified: {TARGET_TABLE}, {AUDIT_TABLE}")
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {VALIDATION_TABLE} (
+        error_id            STRING      NOT NULL COMMENT 'UUID for this validation error row',
+        pipeline_run_id     STRING      NOT NULL COMMENT 'UUID linking to the notebook run',
+        source_file         STRING      NOT NULL COMMENT 'Source file that contained this message',
+        message_id          STRING      COMMENT 'Bronze message_id of the affected message',
+        message_control_id  STRING      COMMENT 'MSH.10 control ID from the message',
+        error_code          STRING      NOT NULL COMMENT 'Structured error code (e.g. HL7_MISSING_PID5)',
+        error_field         STRING      COMMENT 'HL7 field reference (e.g. PID-5)',
+        error_detail        STRING      COMMENT 'Human-readable description of the issue',
+        raw_value           STRING      COMMENT 'The raw field value that triggered the error',
+        severity            STRING      NOT NULL COMMENT 'WARNING | ERROR',
+        logged_at           TIMESTAMP   NOT NULL COMMENT 'When this error was recorded'
+    )
+    USING DELTA
+    COMMENT 'Structured validation errors for Bronze HL7 ingestion. One row per issue per message.'
+    TBLPROPERTIES (
+        'delta.enableChangeDataFeed' = 'true',
+        'delta.autoOptimize.optimizeWrite' = 'true'
+    )
+""")
+
+print(f"Tables verified: {TARGET_TABLE}")
+print(f"                 {AUDIT_TABLE}")
+print(f"                 {VALIDATION_TABLE}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Read source HL7 files
+# MAGIC ## Helper functions
+# MAGIC
+# MAGIC `_split_hl7_batch_file` splits a file containing one or many HL7 messages.
+# MAGIC Single-message files (the sample .txt files) return a one-element list.
+# MAGIC
+# MAGIC `_detect_validation_issues` performs post-parse validation on a successfully
+# MAGIC parsed Bronze record. Checks MSH-4, PID-5, PID-7, and PID-8. Returns a list
+# MAGIC of structured error dicts for insertion into `audit_validation_errors`.
+
+# COMMAND ----------
+
+import re
+
+# HL7 v2.5 Table 0001 — Administrative Sex
+_VALID_GENDER_CODES = {"M", "F", "O", "U", "A", "N", "C"}
+
+
+def _split_hl7_batch_file(content: str) -> list:
+    """
+    Split file content into individual HL7 messages.
+    Messages are delimited by lines beginning with 'MSH|'.
+    Works for both single-message samples and large batch files.
+    """
+    parts = re.split(r"\n(?=MSH\|)", content.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _detect_validation_issues(record, source_file: str, run_id: str) -> list:
+    """
+    Post-parse validation of a Bronze HL7 record (BronzeHL7Record dataclass).
+    Only called for records with processing_status=PENDING.
+    Returns a list of validation_error dicts.
+
+    Error codes:
+      HL7_MISSING_MSH4   — sending_facility (MSH-4) blank or absent
+      HL7_MISSING_PID5   — patient name (PID-5) blank or all-hat characters
+      HL7_MALFORMED_DOB  — PID-7 present but not parseable as HL7 timestamp
+      HL7_INVALID_GENDER — PID-8 value not in HL7 Table 0001 sex codes
+    """
+    issues = []
+    now_ts = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def _issue(code, field, detail, raw_val, severity="WARNING"):
+        return {
+            "error_id":           str(uuid.uuid4()),
+            "pipeline_run_id":    run_id,
+            "source_file":        source_file,
+            "message_id":         record.message_id,
+            "message_control_id": record.message_control_id,
+            "error_code":         code,
+            "error_field":        field,
+            "error_detail":       detail,
+            "raw_value":          raw_val,
+            "severity":           severity,
+            "logged_at":          now_ts,
+        }
+
+    # DQ-ADT-005: Missing MSH-4 (sending facility)
+    if not record.sending_facility:
+        issues.append(_issue(
+            "HL7_MISSING_MSH4", "MSH-4",
+            "Sending facility (MSH-4) is blank or absent; tenant resolved via ZTN fallback",
+            record.sending_facility,
+        ))
+
+    # PID-segment checks require inspecting raw_payload
+    lines = record.raw_payload.strip().splitlines()
+    pid_line = next((l for l in lines if l.startswith("PID|")), None)
+
+    if pid_line:
+        pid_fields = pid_line.split("|")
+
+        # DQ-ADT-001: Missing PID-5 (patient name)
+        pid5 = pid_fields[5].strip() if len(pid_fields) > 5 else ""
+        if not pid5 or set(pid5).issubset({"^", " "}):
+            issues.append(_issue(
+                "HL7_MISSING_PID5", "PID-5",
+                "Patient name (PID-5) is blank or contains only component separators",
+                pid5,
+            ))
+
+        # DQ-ADT-002: Malformed DOB (PID-7)
+        pid7 = pid_fields[7].strip() if len(pid_fields) > 7 else ""
+        if pid7 and parse_hl7_timestamp(pid7) is None:
+            issues.append(_issue(
+                "HL7_MALFORMED_DOB", "PID-7",
+                "Date of birth (PID-7) is present but cannot be parsed as an HL7 timestamp",
+                pid7,
+            ))
+
+        # DQ-ADT-003: Invalid gender code (PID-8)
+        pid8_raw = pid_fields[8].strip() if len(pid_fields) > 8 else ""
+        pid8 = pid8_raw.upper()
+        if pid8 and pid8 not in _VALID_GENDER_CODES:
+            issues.append(_issue(
+                "HL7_INVALID_GENDER", "PID-8",
+                f"Administrative sex (PID-8) value '{pid8_raw}' is not in HL7 Table 0001",
+                pid8_raw,
+            ))
+
+    return issues
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Source files
+# MAGIC
+# MAGIC All four HL7 source files are processed. Sample files contain one message each;
+# MAGIC batch files contain many messages that are split before parsing.
 
 # COMMAND ----------
 
 SOURCE_FILES = [
     f"{REPO_ROOT}/data/synthetic/hl7_adt_sample.txt",
     f"{REPO_ROOT}/data/synthetic/hl7_oru_sample.txt",
+    f"{REPO_ROOT}/data/synthetic/hl7_adt_batch.txt",
+    f"{REPO_ROOT}/data/synthetic/hl7_oru_batch.txt",
 ]
 
-raw_messages = []
 for path in SOURCE_FILES:
-    with open(path, "r") as fh:
-        content = fh.read().strip()
-    raw_messages.append((content, path))
-    print(f"  loaded {len(content):,} chars  ← {os.path.basename(path)}")
-
-print(f"\nTotal messages to parse: {len(raw_messages)}")
+    exists = os.path.exists(path)
+    print(f"  {'OK' if exists else 'MISSING':7s}  {os.path.basename(path)}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Parse messages and build row dicts
+# MAGIC ## Parse messages per file
 # MAGIC
-# MAGIC Every message produces exactly one Bronze row.
-# MAGIC Parse failures land with `processing_status=ERROR` — nothing is dropped.
+# MAGIC Each file is split into individual HL7 messages, then parsed via
+# MAGIC `parse_hl7_batch()`. Every message produces one Bronze row (PENDING or ERROR).
+# MAGIC Successfully-parsed rows are also checked for soft validation issues
+# MAGIC (missing PID-5, malformed DOB, invalid gender, missing MSH-4) and any issues
+# MAGIC are collected for `audit_validation_errors`.
 
 # COMMAND ----------
 
-started_at = datetime.now(timezone.utc)
+all_rows             = []   # rows for hl7_messages
+all_validation_errs  = []   # rows for audit_validation_errors
+audit_entries        = []   # rows for audit_ingest_log (one per file)
 
-rows     = []
-n_failed = 0
+for file_path in SOURCE_FILES:
+    file_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-for raw_msg, file_path in raw_messages:
-    result = parse_hl7_message(
-        raw_msg,
+    with open(file_path, "r") as fh:
+        content = fh.read()
+
+    messages  = _split_hl7_batch_file(content)
+    n_attempted = len(messages)
+
+    records, parse_failures = parse_hl7_batch(
+        messages,
         file_source=file_path,
         default_tenant_id=TENANT_ID,
     )
 
-    if result.success:
-        row = asdict(result.record)
-    else:
-        n_failed += 1
-        row = {
-            "message_id":          str(uuid.uuid4()),
-            "tenant_id":           TENANT_ID,
-            "sending_application": None,
-            "sending_facility":    None,
-            "message_type":        None,
-            "message_control_id":  None,
-            "message_datetime":    None,
-            "source_system":       None,
-            "feed_type":           None,
-            "batch_id":            None,
-            "raw_payload":         raw_msg,
-            "received_ts":         datetime.now(timezone.utc).isoformat(),
-            "ingestion_version":   INGESTION_VERSION,
-            "file_source":         file_path,
-            "processing_status":   "ERROR",
-            "processing_error":    result.error,
-        }
+    # parse_hl7_batch returns ALL records (PENDING + ERROR) in records,
+    # and only the failure details in parse_failures.
+    n_failed    = len(parse_failures)
+    n_succeeded = n_attempted - n_failed
 
-    row["pipeline_run_id"] = pipeline_run_id
-    rows.append(row)
+    # Collect Bronze rows
+    for record in records:
+        row = asdict(record)
+        row["pipeline_run_id"] = pipeline_run_id
+        all_rows.append(row)
 
-n_succeeded = len(rows) - n_failed
-print(f"Parsed {len(rows)} message(s): {n_succeeded} succeeded, {n_failed} error(s)")
-for r in rows:
-    print(f"  {r['processing_status']:8s}  tenant={r['tenant_id']}  type={r['message_type']}  "
-          f"feed={r['feed_type']}  payload_len={len(r['raw_payload'])}")
+    # Validation errors from parse failures
+    for failure in parse_failures:
+        all_validation_errs.append({
+            "error_id":           str(uuid.uuid4()),
+            "pipeline_run_id":    pipeline_run_id,
+            "source_file":        file_path,
+            "message_id":         None,
+            "message_control_id": None,
+            "error_code":         "HL7_PARSE_FAILURE",
+            "error_field":        None,
+            "error_detail":       failure.error,
+            "raw_value":          failure.raw_payload[:200] if failure.raw_payload else None,
+            "severity":           "ERROR",
+            "logged_at":          datetime.now(timezone.utc).replace(tzinfo=None),
+        })
+
+    # Post-parse validation on PENDING records
+    n_validation_issues = 0
+    for record in records:
+        if record.processing_status == "PENDING":
+            issues = _detect_validation_issues(record, file_path, pipeline_run_id)
+            all_validation_errs.extend(issues)
+            n_validation_issues += len(issues)
+
+    file_completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    audit_entries.append({
+        "log_id":            str(uuid.uuid4()),
+        "pipeline_run_id":   pipeline_run_id,
+        "notebook_name":     NOTEBOOK_NAME,
+        "target_table":      TARGET_TABLE,
+        "source_path":       file_path,
+        "started_at":        file_started_at,
+        "completed_at":      file_completed_at,
+        "records_attempted": n_attempted,
+        "records_succeeded": n_succeeded,
+        "records_failed":    n_failed,
+        "status":            "COMPLETED" if n_failed == 0 else "PARTIAL",
+        "error_detail":      None,
+        "ingestion_version": INGESTION_VERSION,
+        "created_ts":        datetime.now(timezone.utc).replace(tzinfo=None),
+    })
+
+    print(f"  {os.path.basename(file_path):30s}  "
+          f"{n_attempted:5,} msgs  "
+          f"{n_succeeded:5,} ok  "
+          f"{n_failed:3} parse_errors  "
+          f"{n_validation_issues:3} dq_issues")
+
+total_rows    = len(all_rows)
+total_dq      = len(all_validation_errs)
+total_attempted = sum(e["records_attempted"] for e in audit_entries)
+print(f"\nTotal: {total_attempted:,} messages → {total_rows:,} Bronze rows, "
+      f"{total_dq:,} validation issues")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Write Bronze rows to Delta table (PySpark)
+# MAGIC ## Write Bronze HL7 rows to Delta table
 
 # COMMAND ----------
 
-from pyspark.sql.types import (
-    StructType, StructField, StringType
-)
+from pyspark.sql.types import StructType, StructField, StringType
 
 hl7_schema = StructType([
     StructField("message_id",          StringType(), False),
@@ -234,67 +416,88 @@ hl7_schema = StructType([
     StructField("pipeline_run_id",     StringType(), False),
 ])
 
-df = spark.createDataFrame(rows, schema=hl7_schema)
+df = spark.createDataFrame(all_rows, schema=hl7_schema)
 
 df.write \
     .format("delta") \
     .mode("append") \
-    .option("mergeSchema", "true") \
-    .saveAsTable(TARGET_TABLE)
+    .insertInto(TARGET_TABLE)
 
-completed_at = datetime.now(timezone.utc)
-duration_s   = (completed_at - started_at).total_seconds()
-print(f"Wrote {df.count()} row(s) to {TARGET_TABLE} in {duration_s:.1f}s")
+print(f"Wrote {df.count():,} row(s) to {TARGET_TABLE}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Write audit log entry
+# MAGIC ## Write validation errors to audit_validation_errors
+
+# COMMAND ----------
+
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
+
+validation_schema = StructType([
+    StructField("error_id",            StringType(),    False),
+    StructField("pipeline_run_id",     StringType(),    False),
+    StructField("source_file",         StringType(),    False),
+    StructField("message_id",          StringType(),    True),
+    StructField("message_control_id",  StringType(),    True),
+    StructField("error_code",          StringType(),    False),
+    StructField("error_field",         StringType(),    True),
+    StructField("error_detail",        StringType(),    True),
+    StructField("raw_value",           StringType(),    True),
+    StructField("severity",            StringType(),    False),
+    StructField("logged_at",           TimestampType(), False),
+])
+
+if all_validation_errs:
+    val_df = spark.createDataFrame(all_validation_errs, schema=validation_schema)
+    val_df.write \
+        .format("delta") \
+        .mode("append") \
+        .insertInto(VALIDATION_TABLE)
+    print(f"Wrote {val_df.count():,} validation error row(s) to {VALIDATION_TABLE}")
+else:
+    print("No validation errors — skipping write to audit_validation_errors")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Write audit log entries (one per source file)
 
 # COMMAND ----------
 
 from pyspark.sql.types import StructType, StructField, StringType, LongType, TimestampType
-from datetime import datetime, timezone
-
-audit_rows = [{
-    "log_id": str(uuid.uuid4()),
-    "pipeline_run_id": pipeline_run_id,
-    "ingestion_path": "fhir",  # or "hl7" or "csv" based on your pipeline
-    "source_table": TARGET_TABLE,
-    "record_count": len(rows),
-    "pass_count": n_succeeded,
-    "error_count": n_failed,
-    "tenant_id": None,  # Set to actual tenant_id if applicable
-    "run_started_at": started_at.replace(tzinfo=None),
-    "run_completed_at": completed_at.replace(tzinfo=None),
-    "logged_at": datetime.now(timezone.utc).replace(tzinfo=None)
-}]
 
 audit_schema = StructType([
-    StructField("log_id", StringType(), nullable=False),
-    StructField("pipeline_run_id", StringType(), nullable=False),
-    StructField("ingestion_path", StringType(), nullable=True),
-    StructField("source_table", StringType(), nullable=True),
-    StructField("record_count", LongType(), nullable=True),
-    StructField("pass_count", LongType(), nullable=True),
-    StructField("error_count", LongType(), nullable=True),
-    StructField("tenant_id", StringType(), nullable=True),
-    StructField("run_started_at", TimestampType(), nullable=True),
-    StructField("run_completed_at", TimestampType(), nullable=True),
-    StructField("logged_at", TimestampType(), nullable=False)
+    StructField("log_id",            StringType(),    False),
+    StructField("pipeline_run_id",   StringType(),    False),
+    StructField("notebook_name",     StringType(),    False),
+    StructField("target_table",      StringType(),    False),
+    StructField("source_path",       StringType(),    True),
+    StructField("started_at",        TimestampType(), False),
+    StructField("completed_at",      TimestampType(), True),
+    StructField("records_attempted", LongType(),      True),
+    StructField("records_succeeded", LongType(),      True),
+    StructField("records_failed",    LongType(),      True),
+    StructField("status",            StringType(),    False),
+    StructField("error_detail",      StringType(),    True),
+    StructField("ingestion_version", StringType(),    True),
+    StructField("created_ts",        TimestampType(), False),
 ])
 
-audit_df = spark.createDataFrame(audit_rows, schema=audit_schema)
+audit_df = spark.createDataFrame(audit_entries, schema=audit_schema)
 
 audit_df.write \
     .format("delta") \
     .mode("append") \
     .insertInto(AUDIT_TABLE)
 
-print(f"Audit log written: status={'COMPLETED' if n_failed == 0 else 'PARTIAL'}  "
-      f"attempted={len(rows)}  "
-      f"succeeded={n_succeeded}  "
-      f"failed={n_failed}")
+print(f"Audit log written: {len(audit_entries)} file(s) logged to {AUDIT_TABLE}")
+for e in audit_entries:
+    print(f"  {os.path.basename(e['source_path']):30s}  "
+          f"status={e['status']:10s}  "
+          f"attempted={e['records_attempted']:5,}  "
+          f"succeeded={e['records_succeeded']:5,}  "
+          f"failed={e['records_failed']}")
 
 # COMMAND ----------
 
@@ -306,23 +509,36 @@ print(f"Audit log written: status={'COMPLETED' if n_failed == 0 else 'PARTIAL'} 
 display(
     spark.sql(f"""
         SELECT
-            message_id,
-            tenant_id,
-            message_type,
-            feed_type,
-            message_control_id,
-            message_datetime,
+            file_source,
             processing_status,
-            pipeline_run_id,
-            LENGTH(raw_payload) AS raw_payload_chars
+            feed_type,
+            COUNT(*)                    AS msg_count,
+            COUNT(message_control_id)   AS with_control_id,
+            COUNT(sending_facility)     AS with_facility
         FROM {TARGET_TABLE}
         WHERE pipeline_run_id = '{pipeline_run_id}'
-        ORDER BY received_ts
+        GROUP BY file_source, processing_status, feed_type
+        ORDER BY file_source, processing_status
+    """)
+)
+
+# COMMAND ----------
+
+display(
+    spark.sql(f"""
+        SELECT
+            error_code,
+            error_field,
+            severity,
+            COUNT(*) AS issue_count
+        FROM {VALIDATION_TABLE}
+        WHERE pipeline_run_id = '{pipeline_run_id}'
+        GROUP BY error_code, error_field, severity
+        ORDER BY issue_count DESC
     """)
 )
 
 # COMMAND ----------
 
 # DBTITLE 1,Return pipeline_run_id to orchestrator
-# Return pipeline_run_id to orchestrator
 dbutils.notebook.exit(pipeline_run_id)
