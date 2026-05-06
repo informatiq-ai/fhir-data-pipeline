@@ -272,7 +272,7 @@ audit_rows = [{
     "status":            "COMPLETED" if n_failed == 0 else "PARTIAL",
     "error_detail":      None,
     "ingestion_version": INGESTION_VERSION,
-    "created_ts":        datetime.utcnow(),
+    "created_ts":        datetime.now(datetime.UTC).replace(tzinfo=None),
 }]
 
 audit_schema = StructType([
@@ -297,7 +297,7 @@ audit_df = spark.createDataFrame(audit_rows, schema=audit_schema)
 audit_df.write \
     .format("delta") \
     .mode("append") \
-    .saveAsTable(AUDIT_TABLE)
+    .insertInto(AUDIT_TABLE)
 
 print(f"Audit log written: status={audit_rows[0]['status']}  "
       f"attempted={audit_rows[0]['records_attempted']}  "
