@@ -264,6 +264,13 @@ def calculate_age(birth_date: date, as_of: date) -> int:
     return years
 
 
+def ensure_utc(dt: datetime) -> datetime:
+    """Return dt as UTC-aware. If naive, assume UTC and attach tzinfo."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def assign_risk_tier(charlson_index: int) -> str:
     """
     Map Charlson Comorbidity Index to a risk tier.
@@ -364,7 +371,7 @@ def build_patient_summary(
 
     recent_encounters = [
         e for e in encounters
-        if e.period_start and e.period_start >= window_start
+        if e.period_start and ensure_utc(e.period_start) >= window_start
     ]
 
     total_encounters_12m = len(recent_encounters)
