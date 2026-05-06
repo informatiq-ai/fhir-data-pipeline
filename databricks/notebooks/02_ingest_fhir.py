@@ -1,7 +1,4 @@
 # Databricks notebook source
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC # 02 — Ingest FHIR R4 Bundle (Bronze)
 # MAGIC
@@ -241,22 +238,20 @@ print(f"Wrote {df.count()} row(s) to {TARGET_TABLE} in {duration_s:.1f}s")
 # COMMAND ----------
 
 from pyspark.sql.types import StructType, StructField, StringType, LongType, TimestampType
+from datetime import datetime, timezone
 
 audit_rows = [{
-    "log_id":            str(uuid.uuid4()),
-    "pipeline_run_id":   pipeline_run_id,
-    "notebook_name":     NOTEBOOK_NAME,
-    "target_table":      TARGET_TABLE,
-    "source_path":       str(SOURCE_FILES),
-    "started_at":        started_at.replace(tzinfo=None),
-    "completed_at":      completed_at.replace(tzinfo=None),
-    "records_attempted": len(rows),
-    "records_succeeded": n_succeeded,
-    "records_failed":    n_failed,
-    "status":            "COMPLETED" if n_failed == 0 else "PARTIAL",
-    "error_detail":      None,
-    "ingestion_version": INGESTION_VERSION,
-    "created_ts":        datetime.now(datetime.UTC).replace(tzinfo=None),
+    "log_id": str(uuid.uuid4()),
+    "pipeline_run_id": pipeline_run_id,
+    "ingestion_path": "fhir",  # or "hl7" or "csv" based on your pipeline
+    "source_table": TARGET_TABLE,
+    "record_count": len(rows),
+    "pass_count": n_succeeded,
+    "error_count": n_failed,
+    "tenant_id": None,  # Set to actual tenant_id if applicable
+    "run_started_at": started_at.replace(tzinfo=None),
+    "run_completed_at": completed_at.replace(tzinfo=None),
+    "logged_at": datetime.now(timezone.utc).replace(tzinfo=None)
 }]
 
 audit_schema = StructType([
@@ -280,10 +275,10 @@ audit_df.write \
     .mode("append") \
     .insertInto(AUDIT_TABLE)
 
-print(f"Audit log written: status={audit_rows[0]['status']}  "
-      f"attempted={audit_rows[0]['records_attempted']}  "
-      f"succeeded={audit_rows[0]['records_succeeded']}  "
-      f"failed={audit_rows[0]['records_failed']}")
+print(f"Audit log written: status={'COMPLETED' if n_failed == 0 else 'PARTIAL'}  "
+      f"attempted={len(rows)}  "
+      f"succeeded={n_succeeded}  "
+      f"failed={n_failed}")
 
 # COMMAND ----------
 
