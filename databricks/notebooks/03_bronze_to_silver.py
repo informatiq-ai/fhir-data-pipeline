@@ -705,14 +705,14 @@ for row in by_type.get("Condition", []):
     source_code = source_display = source_system = icd10_code = icd10_display = None
 
     for coding in codings:
-        system  = coding.get("system", "")
-        code    = coding.get("code")
-        display = coding.get("display")
+        system       = coding.get("system", "")
+        code         = coding.get("code")
+        code_display = coding.get("display")  
         if "icd-10" in system.lower() or "icd10" in system.lower():
             icd10_code    = code
-            icd10_display = display
+            icd10_display = code_display  
         source_code    = source_code or code
-        source_display = source_display or display
+        source_display = source_display or code_display 
         source_system  = source_system or system
 
     # SNOMED dual-coding via terminology service
