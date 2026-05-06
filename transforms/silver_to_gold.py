@@ -360,7 +360,7 @@ def build_patient_summary(
     age = calculate_age(patient.birth_date, as_of) if patient.birth_date else None
 
     # 12-month utilization window
-    window_start = datetime.combine(as_of - timedelta(days=365), datetime.min.time())
+    window_start = datetime.combine(as_of - timedelta(days=365), datetime.min.time()).replace(tzinfo=timezone.utc)
 
     recent_encounters = [
         e for e in encounters
