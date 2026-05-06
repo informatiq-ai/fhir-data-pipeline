@@ -256,7 +256,7 @@ print(f"Wrote {df.count()} row(s) to {TARGET_TABLE} in {duration_s:.1f}s")
 
 # COMMAND ----------
 
-from pyspark.sql.types import LongType, TimestampType
+from pyspark.sql.types import StructType, StructField, StringType, LongType, TimestampType
 
 audit_rows = [{
     "log_id":            str(uuid.uuid4()),
@@ -276,20 +276,17 @@ audit_rows = [{
 }]
 
 audit_schema = StructType([
-    StructField("log_id",            StringType(),    False),
-    StructField("pipeline_run_id",   StringType(),    False),
-    StructField("notebook_name",     StringType(),    False),
-    StructField("target_table",      StringType(),    False),
-    StructField("source_path",       StringType(),    True),
-    StructField("started_at",        TimestampType(), False),
-    StructField("completed_at",      TimestampType(), True),
-    StructField("records_attempted", LongType(),      True),
-    StructField("records_succeeded", LongType(),      True),
-    StructField("records_failed",    LongType(),      True),
-    StructField("status",            StringType(),    False),
-    StructField("error_detail",      StringType(),    True),
-    StructField("ingestion_version", StringType(),    True),
-    StructField("created_ts",        TimestampType(), False),
+    StructField("log_id", StringType(), nullable=False),
+    StructField("pipeline_run_id", StringType(), nullable=False),
+    StructField("ingestion_path", StringType(), nullable=True),
+    StructField("source_table", StringType(), nullable=True),
+    StructField("record_count", LongType(), nullable=True),
+    StructField("pass_count", LongType(), nullable=True),
+    StructField("error_count", LongType(), nullable=True),
+    StructField("tenant_id", StringType(), nullable=True),
+    StructField("run_started_at", TimestampType(), nullable=True),
+    StructField("run_completed_at", TimestampType(), nullable=True),
+    StructField("logged_at", TimestampType(), nullable=False)
 ])
 
 audit_df = spark.createDataFrame(audit_rows, schema=audit_schema)
