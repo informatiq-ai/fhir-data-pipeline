@@ -1,15 +1,20 @@
 # Databricks notebook source
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC # 03 — Bronze → Silver Normalization
 # MAGIC
 # MAGIC **Purpose:** Read FHIR R4 resource rows from Bronze, run identity resolution
 # MAGIC and terminology normalization, and write normalized records to Silver CDM tables.
+# MAGIC All MPI matching logic is delegated entirely to `transforms/identity_resolution.py`.
 # MAGIC
 # MAGIC **Processing order (enforced):**
-# MAGIC 1. Patient resources → MPI resolution → `master_patient_index`
-# MAGIC 2. Encounter resources → `encounters`
-# MAGIC 3. Observation resources → LOINC normalization → `lab_observations` + `normalization_log`
-# MAGIC 4. Condition resources → SNOMED dual-coding → `diagnoses`
+# MAGIC 1. Seed in-memory MPIIndex from existing Silver records (idempotency)
+# MAGIC 2. Patient resources → MPIIndex.resolve() → `mpi_patient_index` + `mpi_identity_crosswalk`
+# MAGIC 3. Encounter resources → `encounters`
+# MAGIC 4. Observation resources → LOINC normalization → `lab_observations` + `normalization_log`
+# MAGIC 5. Condition resources → SNOMED dual-coding → `diagnoses`
 # MAGIC
 # MAGIC Unmapped terminology codes land in `terminology_unmapped_codes` — nothing is dropped.
 # MAGIC Every mapping (mapped or UNMAPPED) is written to `normalization_log`.
@@ -17,7 +22,8 @@
 # MAGIC **Reads from:** `dev.fhir_bronze.fhir_resources`
 # MAGIC
 # MAGIC **Writes to:**
-# MAGIC - `dev.fhir_silver.master_patient_index`
+# MAGIC - `dev.fhir_silver.mpi_patient_index` — one row per unique UMPI (new patients only)
+# MAGIC - `dev.fhir_silver.mpi_identity_crosswalk` — one row per source_id → UMPI mapping
 # MAGIC - `dev.fhir_silver.encounters`
 # MAGIC - `dev.fhir_silver.lab_observations`
 # MAGIC - `dev.fhir_silver.diagnoses`
@@ -30,7 +36,6 @@
 # COMMAND ----------
 
 import sys
-import os
 import uuid
 import json
 from datetime import datetime, timezone, date
@@ -48,7 +53,8 @@ BRONZE_FHIR_TABLE  = f"{SRC_CATALOG}.{SRC_SCHEMA}.fhir_resources"
 NOTEBOOK_NAME      = "03_bronze_to_silver"
 PIPELINE_VERSION   = "1.0.0"
 
-TBL_MPI            = f"{TGT_CATALOG}.{TGT_SCHEMA}.master_patient_index"
+TBL_MPI_PATIENTS   = f"{TGT_CATALOG}.{TGT_SCHEMA}.mpi_patient_index"
+TBL_MPI_XWALK      = f"{TGT_CATALOG}.{TGT_SCHEMA}.mpi_identity_crosswalk"
 TBL_ENCOUNTERS     = f"{TGT_CATALOG}.{TGT_SCHEMA}.encounters"
 TBL_LAB_OBS        = f"{TGT_CATALOG}.{TGT_SCHEMA}.lab_observations"
 TBL_DIAGNOSES      = f"{TGT_CATALOG}.{TGT_SCHEMA}.diagnoses"
@@ -88,6 +94,11 @@ else:
 
 # MAGIC %md
 # MAGIC ## Resolve repo root and import transform modules
+# MAGIC
+# MAGIC All MPI matching logic lives in `transforms/identity_resolution.py` and is
+# MAGIC covered by 41 unit tests. This notebook is an orchestration layer only —
+# MAGIC it calls `MPIIndex.resolve()` and writes the results. It does not implement
+# MAGIC any matching logic itself.
 
 # COMMAND ----------
 
@@ -116,7 +127,12 @@ mpi        = MPIIndex()
 terminology = TerminologyService()
 
 print("Transform modules imported successfully")
-print(f"MPI index initialized (in-memory, reference implementation)")
+print("MPI: 4-pass deterministic matching via MPIIndex (identity_resolution.py)")
+print("  Pass 1: exact MRN + facility NPI")
+print("  Pass 2: identifier system + value")
+print("  Pass 3: SSN-4 + DOB + family name")
+print("  Pass 4: DOB + full name + postal code")
+print("  No match → NEW_RECORD, new UMPI minted")
 
 # COMMAND ----------
 
@@ -128,13 +144,13 @@ print(f"MPI index initialized (in-memory, reference implementation)")
 spark.sql(f"CREATE CATALOG IF NOT EXISTS {TGT_CATALOG}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {TGT_CATALOG}.{TGT_SCHEMA}")
 
-# ── master_patient_index ──────────────────────────────────────────────────────
+# ── mpi_patient_index — one row per unique UMPI ───────────────────────────────
 spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS {TBL_MPI} (
+    CREATE TABLE IF NOT EXISTS {TBL_MPI_PATIENTS} (
         umpi                STRING  NOT NULL COMMENT 'Universal Master Patient Index — UUID',
         tenant_id           STRING  NOT NULL COMMENT 'Tenant that first created this record',
-        match_method        STRING  NOT NULL COMMENT 'DETERMINISTIC | NEW_RECORD',
-        match_confidence    DOUBLE  COMMENT '1.0 = deterministic lookup; 0.0 = new record',
+        match_method        STRING  NOT NULL COMMENT 'NEW_RECORD (first-seen patients only)',
+        match_confidence    DOUBLE  COMMENT '0.0 for new records',
         family_name         STRING,
         given_name          STRING,
         birth_date          STRING  COMMENT 'ISO 8601 date string (YYYY-MM-DD)',
@@ -143,12 +159,34 @@ spark.sql(f"""
         ssn_last4           STRING  COMMENT 'Last 4 of SSN only — never full SSN',
         source_tenant_id    STRING,
         source_table        STRING  COMMENT 'Bronze table that provided the Patient resource',
-        source_id           STRING  COMMENT 'Bronze resource_id for this patient',
+        source_id           STRING  COMMENT 'Bronze resource_id for this patient (first seen)',
         pipeline_run_id     STRING  NOT NULL,
         created_ts          TIMESTAMP NOT NULL
     )
     USING DELTA
-    COMMENT 'Universal patient identity index. Every Silver entity is keyed to a UMPI.'
+    COMMENT 'One row per unique UMPI. Written only when a new patient is minted. Never updated.'
+    TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+""")
+
+# ── mpi_identity_crosswalk — one row per source_id → UMPI mapping ─────────────
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {TBL_MPI_XWALK} (
+        crosswalk_id                STRING  NOT NULL COMMENT 'UUID for this crosswalk row',
+        umpi                        STRING  NOT NULL COMMENT 'Resolved UMPI',
+        tenant_id                   STRING  NOT NULL,
+        source_table                STRING  NOT NULL COMMENT 'Bronze table',
+        source_id                   STRING  NOT NULL COMMENT 'Bronze resource_id',
+        source_mrn                  STRING  COMMENT 'MRN from source system identifier',
+        source_facility_npi         STRING  COMMENT 'Facility NPI — populated from HL7 MSH',
+        source_identifier_system    STRING  COMMENT 'FHIR identifier.system (e.g. urn:oid:…)',
+        source_identifier_value     STRING  COMMENT 'FHIR identifier.value (MRN value)',
+        match_method                STRING  COMMENT 'DETERMINISTIC | NEW_RECORD',
+        matched_on                  STRING  COMMENT 'Comma-separated list of matched fields',
+        pipeline_run_id             STRING  NOT NULL,
+        created_ts                  TIMESTAMP NOT NULL
+    )
+    USING DELTA
+    COMMENT 'One row per source_id → UMPI link. Written on every run including repeat runs.'
     TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
 """)
 
@@ -286,6 +324,104 @@ print("Silver tables verified")
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Truncate stale data (development only)
+# MAGIC
+# MAGIC These TRUNCATE statements reset the MPI tables so each development run starts
+# MAGIC clean. Comment them out in production — Silver tables accumulate across runs
+# MAGIC and the seeding step (next cell) handles idempotency.
+
+# COMMAND ----------
+
+spark.sql(f"TRUNCATE TABLE {TBL_MPI_PATIENTS}")
+spark.sql(f"TRUNCATE TABLE {TBL_MPI_XWALK}")
+
+print("MPI tables truncated (development mode)")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Verify table names
+
+# COMMAND ----------
+
+display(spark.sql(f"SHOW TABLES IN {TGT_CATALOG}.{TGT_SCHEMA}"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Seed MPIIndex from existing Silver records (idempotency)
+# MAGIC
+# MAGIC Load previously resolved UMPIs from `mpi_patient_index` and
+# MAGIC `mpi_identity_crosswalk` into the in-memory MPIIndex before processing
+# MAGIC new Bronze rows. This ensures that patients seen in earlier runs are
+# MAGIC matched to their existing UMPI instead of receiving a new one.
+# MAGIC
+# MAGIC Restores all four matching passes where stored data allows:
+# MAGIC - Pass 1 (MRN+NPI) and Pass 2 (identifier system+value) from crosswalk
+# MAGIC - Pass 3 (SSN4+DOB+name) and Pass 4 (DOB+name+zip) from mpi_patient_index
+
+# COMMAND ----------
+
+existing_patients = spark.sql(f"""
+    SELECT umpi, tenant_id, family_name, given_name, birth_date,
+           gender, postal_code, ssn_last4
+    FROM {TBL_MPI_PATIENTS}
+""").collect()
+
+existing_xwalk = spark.sql(f"""
+    SELECT umpi, source_mrn, source_facility_npi,
+           source_identifier_system, source_identifier_value
+    FROM {TBL_MPI_XWALK}
+""").collect()
+
+# Restore _umpi_records and demographic indexes from mpi_patient_index
+for r in existing_patients:
+    umpi = r["umpi"]
+    mpi._umpi_records[umpi] = {
+        "umpi":        umpi,
+        "tenant_id":   r["tenant_id"],
+        "family_name": r["family_name"],
+        "given_name":  r["given_name"],
+        "birth_date":  r["birth_date"],
+        "gender":      r["gender"],
+        "postal_code": r["postal_code"],
+        "ssn_last4":   r["ssn_last4"],
+    }
+    # Restore Pass 3: SSN4 + DOB + family name
+    if r["ssn_last4"] and r["birth_date"] and r["family_name"]:
+        key = (r["ssn_last4"], r["birth_date"], mpi._normalize_name(r["family_name"]))
+        mpi._ssn4_dob_name_index[key] = umpi
+    # Restore Pass 4: DOB + full name + postal code
+    if r["birth_date"] and r["family_name"] and r["given_name"] and r["postal_code"]:
+        key = (
+            r["birth_date"],
+            mpi._normalize_name(r["family_name"]),
+            mpi._normalize_name(r["given_name"]),
+            r["postal_code"],
+        )
+        mpi._dob_name_zip_index[key] = umpi
+
+# Restore Pass 1 (MRN+NPI) and Pass 2 (identifier system+value) from crosswalk
+for r in existing_xwalk:
+    umpi = r["umpi"]
+    if r["source_mrn"] and r["source_facility_npi"]:
+        key = (r["source_mrn"], r["source_facility_npi"])
+        mpi._mrn_npi_index[key] = umpi
+    if r["source_identifier_system"] and r["source_identifier_value"]:
+        key = (r["source_identifier_system"], r["source_identifier_value"])
+        mpi._identifier_index[key] = umpi
+
+print(f"MPIIndex seeded from existing Silver records:")
+print(f"  mpi_patient_index rows  : {len(existing_patients)}")
+print(f"  mpi_identity_crosswalk  : {len(existing_xwalk)}")
+print(f"  _umpi_records           : {len(mpi._umpi_records)}")
+print(f"  _identifier_index       : {len(mpi._identifier_index)}")
+print(f"  _ssn4_dob_name_index    : {len(mpi._ssn4_dob_name_index)}")
+print(f"  _dob_name_zip_index     : {len(mpi._dob_name_zip_index)}")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Read Bronze FHIR resources
 
 # COMMAND ----------
@@ -320,19 +456,22 @@ for rt, rows in sorted(by_type.items()):
 # MAGIC %md
 # MAGIC ## Pass 1 — Identity Resolution (Patient resources)
 # MAGIC
-# MAGIC Every Patient resource in Bronze is resolved through the MPI before any
-# MAGIC clinical normalization runs. The resulting UMPI is the key for all
-# MAGIC subsequent Silver entities in this Bundle.
+# MAGIC Every Patient resource is resolved through `MPIIndex.resolve()` which implements
+# MAGIC the full 4-pass deterministic matching hierarchy from `identity_resolution.py`.
+# MAGIC No matching logic is implemented in this notebook.
+# MAGIC
+# MAGIC Write pattern:
+# MAGIC - `mpi_patient_index`: written only when `is_new_record=True` (one row per unique UMPI)
+# MAGIC - `mpi_identity_crosswalk`: written for every source Bronze row (tracks all source → UMPI links)
 
 # COMMAND ----------
 
-now_ts = datetime.utcnow()
+now_ts = datetime.now(timezone.utc).replace(tzinfo=None)
 
-mpi_rows         = []
-# patient_umpi_map: fhir_resource_id → umpi (used by Encounter/Observation/Condition)
-patient_umpi_map = {}
-# bronze_resource_id → umpi (keyed by Bronze source_id for lineage)
-bronze_to_umpi   = {}
+mpi_patient_rows  = []   # only new UMPIs — written to mpi_patient_index
+crosswalk_rows    = []   # all resolutions — written to mpi_identity_crosswalk
+patient_umpi_map  = {}   # fhir_resource_id → umpi (for Encounter/Obs/Condition linking)
+bronze_to_umpi    = {}   # bronze resource_id → umpi
 
 for row in by_type.get("Patient", []):
     resource    = json.loads(row["raw_payload"])
@@ -347,40 +486,61 @@ for row in by_type.get("Patient", []):
 
     result = mpi.resolve(identity)
 
-    # Map the FHIR Patient ID (used as subject.reference target in other resources)
+    # Map both bare FHIR ID and urn:uuid: form for subject.reference resolution
     fhir_id = resource.get("id", "")
-    patient_umpi_map[fhir_id]          = result.umpi
+    patient_umpi_map[fhir_id]               = result.umpi
     patient_umpi_map[f"urn:uuid:{fhir_id}"] = result.umpi
-    bronze_to_umpi[resource_id]        = result.umpi
+    bronze_to_umpi[resource_id]             = result.umpi
 
-    patient_rec = mpi.get_patient(result.umpi) or {}
+    print(f"  Patient {fhir_id}  →  umpi={result.umpi}  "
+          f"method={result.match_method}  new={result.is_new_record}")
 
-    mpi_rows.append({
-        "umpi":             result.umpi,
-        "tenant_id":        TENANT_ID,
-        "match_method":     result.match_method,
-        "match_confidence": result.match_confidence,
-        "family_name":      patient_rec.get("family_name"),
-        "given_name":       patient_rec.get("given_name"),
-        "birth_date":       patient_rec.get("birth_date"),
-        "gender":           patient_rec.get("gender"),
-        "postal_code":      patient_rec.get("postal_code"),
-        "ssn_last4":        patient_rec.get("ssn_last4"),
-        "source_tenant_id": TENANT_ID,
-        "source_table":     BRONZE_FHIR_TABLE,
-        "source_id":        resource_id,
-        "pipeline_run_id":  pipeline_run_id,
-        "created_ts":       now_ts,
+    # mpi_patient_index: only write when this is a genuinely new patient
+    if result.is_new_record:
+        patient_rec = mpi.get_patient(result.umpi) or {}
+        mpi_patient_rows.append({
+            "umpi":             result.umpi,
+            "tenant_id":        TENANT_ID,
+            "match_method":     result.match_method,
+            "match_confidence": result.match_confidence,
+            "family_name":      patient_rec.get("family_name"),
+            "given_name":       patient_rec.get("given_name"),
+            "birth_date":       patient_rec.get("birth_date"),
+            "gender":           patient_rec.get("gender"),
+            "postal_code":      patient_rec.get("postal_code"),
+            "ssn_last4":        patient_rec.get("ssn_last4"),
+            "source_tenant_id": TENANT_ID,
+            "source_table":     BRONZE_FHIR_TABLE,
+            "source_id":        resource_id,
+            "pipeline_run_id":  pipeline_run_id,
+            "created_ts":       now_ts,
+        })
+
+    # mpi_identity_crosswalk: always write (tracks every source → UMPI link)
+    crosswalk_rows.append({
+        "crosswalk_id":             str(uuid.uuid4()),
+        "umpi":                     result.umpi,
+        "tenant_id":                TENANT_ID,
+        "source_table":             BRONZE_FHIR_TABLE,
+        "source_id":                resource_id,
+        "source_mrn":               identity.source_mrn,
+        "source_facility_npi":      identity.source_facility_npi,
+        "source_identifier_system": identity.source_identifier_system,
+        "source_identifier_value":  identity.source_mrn,
+        "match_method":             result.match_method,
+        "matched_on":               ",".join(result.matched_on) if result.matched_on else None,
+        "pipeline_run_id":          pipeline_run_id,
+        "created_ts":               now_ts,
     })
 
-    print(f"  Patient {fhir_id}  →  umpi={result.umpi}  method={result.match_method}")
-
-print(f"\nMPI resolved: {len(mpi_rows)} patient(s)")
+print(f"\nMPI resolved   : {len(crosswalk_rows)} patient(s)")
+print(f"New UMPIs minted : {len(mpi_patient_rows)}")
+print(f"Existing matches : {len(crosswalk_rows) - len(mpi_patient_rows)}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Write master_patient_index rows
+# MAGIC ## Write mpi_patient_index (new patients only)
 
 # COMMAND ----------
 
@@ -388,7 +548,7 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, DoubleType, TimestampType
 )
 
-mpi_schema = StructType([
+mpi_patients_schema = StructType([
     StructField("umpi",             StringType(),    False),
     StructField("tenant_id",        StringType(),    False),
     StructField("match_method",     StringType(),    False),
@@ -406,12 +566,42 @@ mpi_schema = StructType([
     StructField("created_ts",       TimestampType(), False),
 ])
 
-if mpi_rows:
-    mpi_df = spark.createDataFrame(mpi_rows, schema=mpi_schema)
-    mpi_df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(TBL_MPI)
-    print(f"Wrote {len(mpi_rows)} row(s) to {TBL_MPI}")
+if mpi_patient_rows:
+    mpi_df = spark.createDataFrame(mpi_patient_rows, schema=mpi_patients_schema)
+    mpi_df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(TBL_MPI_PATIENTS)
+    print(f"Wrote {len(mpi_patient_rows)} new UMPI row(s) to {TBL_MPI_PATIENTS}")
 else:
-    print("No Patient resources found — skipping MPI write")
+    print("All patients matched existing UMPIs — mpi_patient_index not written")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Write mpi_identity_crosswalk (every source → UMPI link)
+
+# COMMAND ----------
+
+xwalk_schema = StructType([
+    StructField("crosswalk_id",             StringType(),    False),
+    StructField("umpi",                     StringType(),    False),
+    StructField("tenant_id",                StringType(),    False),
+    StructField("source_table",             StringType(),    False),
+    StructField("source_id",               StringType(),    False),
+    StructField("source_mrn",              StringType(),    True),
+    StructField("source_facility_npi",     StringType(),    True),
+    StructField("source_identifier_system", StringType(),   True),
+    StructField("source_identifier_value", StringType(),    True),
+    StructField("match_method",            StringType(),    True),
+    StructField("matched_on",              StringType(),    True),
+    StructField("pipeline_run_id",         StringType(),    False),
+    StructField("created_ts",             TimestampType(), False),
+])
+
+if crosswalk_rows:
+    xwalk_df = spark.createDataFrame(crosswalk_rows, schema=xwalk_schema)
+    xwalk_df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(TBL_MPI_XWALK)
+    print(f"Wrote {len(crosswalk_rows)} crosswalk row(s) to {TBL_MPI_XWALK}")
+else:
+    print("No Patient resources found — crosswalk not written")
 
 # COMMAND ----------
 
@@ -423,8 +613,7 @@ else:
 # COMMAND ----------
 
 encounter_rows    = []
-# encounter silver_id → encounter_id (for linking Observation / Condition)
-encounter_id_map  = {}  # fhir Encounter id → silver encounter_id
+encounter_id_map  = {}   # fhir Encounter id → silver encounter_id
 
 for row in by_type.get("Encounter", []):
     resource    = json.loads(row["raw_payload"])
@@ -440,7 +629,7 @@ for row in by_type.get("Encounter", []):
 
     silver_enc_id = str(uuid.uuid4())
     fhir_enc_id   = resource.get("id", "")
-    encounter_id_map[fhir_enc_id]          = silver_enc_id
+    encounter_id_map[fhir_enc_id]               = silver_enc_id
     encounter_id_map[f"urn:uuid:{fhir_enc_id}"] = silver_enc_id
 
     period = resource.get("period", {})
@@ -522,7 +711,6 @@ for row in by_type.get("Observation", []):
         print(f"  WARN: No UMPI for Observation subject '{subject_ref}' — skipping")
         continue
 
-    # Resolve encounter reference if present
     enc_ref     = resource.get("encounter", {}).get("reference", "")
     enc_fhir_id = enc_ref.split("/")[-1].replace("urn:uuid:", "")
     silver_enc_id = encounter_id_map.get(enc_ref) or encounter_id_map.get(enc_fhir_id)
@@ -536,19 +724,16 @@ for row in by_type.get("Observation", []):
         encounter_silver_id=silver_enc_id,
     )
 
-    # Build lab_observations row
     lab_row = asdict(silver_rec)
     lab_row["pipeline_run_id"] = pipeline_run_id
     lab_row["created_ts"]      = now_ts
     lab_rows.append(lab_row)
 
-    # Collect normalization log entries
     for entry in norm_log:
         entry["pipeline_run_id"] = pipeline_run_id
         entry["processed_ts"]    = now_ts
         norm_log_rows.append(entry)
 
-        # Write to unmapped table if this is an UNMAPPED entry
         if entry.get("mapping_method") == "UNMAPPED":
             unmapped_rows.append({
                 "record_id":          str(uuid.uuid4()),
@@ -599,7 +784,7 @@ lab_schema = StructType([
     StructField("loinc_mapped",           BooleanType(), False),
     StructField("loinc_map_method",       StringType(),  False),
     StructField("source_table",           StringType(),  True),
-    StructField("source_id",              StringType(),  True),
+    StructField("source_id",             StringType(),  True),
     StructField("pipeline_run_id",        StringType(),  False),
     StructField("created_ts",             TimestampType(), False),
 ])
@@ -700,29 +885,26 @@ for row in by_type.get("Condition", []):
     enc_fhir_id   = enc_ref.split("/")[-1].replace("urn:uuid:", "")
     silver_enc_id = encounter_id_map.get(enc_ref) or encounter_id_map.get(enc_fhir_id)
 
-    # Extract ICD-10 code
     codings      = resource.get("code", {}).get("coding", [])
     source_code = source_display = source_system = icd10_code = icd10_display = None
 
     for coding in codings:
         system       = coding.get("system", "")
         code         = coding.get("code")
-        code_display = coding.get("display")  
+        code_display = coding.get("display")
         if "icd-10" in system.lower() or "icd10" in system.lower():
             icd10_code    = code
-            icd10_display = code_display  
+            icd10_display = code_display
         source_code    = source_code or code
-        source_display = source_display or code_display 
+        source_display = source_display or code_display
         source_system  = source_system or system
 
-    # SNOMED dual-coding via terminology service
     snomed_code = snomed_display = None
     if icd10_code:
         snomed_result = terminology.map_snomed_from_icd10(icd10_code)
         if snomed_result:
             snomed_code, snomed_display = snomed_result
         else:
-            # Log unmapped ICD-10 → SNOMED
             unmapped_row = {
                 "record_id":          str(uuid.uuid4()),
                 "pipeline_run_id":    pipeline_run_id,
@@ -737,7 +919,6 @@ for row in by_type.get("Condition", []):
                 "created_ts":         now_ts,
             }
             unmapped_rows.append(unmapped_row)
-            # Append immediately to Delta so it's captured even if later code fails
             unmapped_df_single = spark.createDataFrame([unmapped_row], schema=unmapped_schema)
             unmapped_df_single.write.format("delta").mode("append").saveAsTable(TBL_UNMAPPED)
 
@@ -749,24 +930,24 @@ for row in by_type.get("Condition", []):
     onset = resource.get("onsetDateTime")
 
     diagnosis_rows.append({
-        "diagnosis_id":     str(uuid.uuid4()),
-        "tenant_id":        TENANT_ID,
-        "umpi":             umpi,
-        "encounter_id":     silver_enc_id,
-        "icd10_code":       icd10_code,
-        "icd10_display":    icd10_display,
-        "snomed_code":      snomed_code,
-        "snomed_display":   snomed_display,
-        "source_code":      source_code,
+        "diagnosis_id":       str(uuid.uuid4()),
+        "tenant_id":          TENANT_ID,
+        "umpi":               umpi,
+        "encounter_id":       silver_enc_id,
+        "icd10_code":         icd10_code,
+        "icd10_display":      icd10_display,
+        "snomed_code":        snomed_code,
+        "snomed_display":     snomed_display,
+        "source_code":        source_code,
         "source_code_system": source_system,
-        "source_display":   source_display,
-        "diagnosis_rank":   1,
-        "clinical_status":  clinical_status,
-        "onset_datetime":   onset,
-        "source_table":     BRONZE_FHIR_TABLE,
-        "source_id":        resource_id,
-        "pipeline_run_id":  pipeline_run_id,
-        "created_ts":       now_ts,
+        "source_display":     source_display,
+        "diagnosis_rank":     1,
+        "clinical_status":    clinical_status,
+        "onset_datetime":     onset,
+        "source_table":       BRONZE_FHIR_TABLE,
+        "source_id":          resource_id,
+        "pipeline_run_id":    pipeline_run_id,
+        "created_ts":         now_ts,
     })
 
     print(f"  Condition {resource.get('id')}  →  icd10={icd10_code}  snomed={snomed_code}")
@@ -815,7 +996,8 @@ else:
 print("=" * 60)
 print(f"Bronze → Silver complete  |  pipeline_run_id: {pipeline_run_id}")
 print("=" * 60)
-print(f"  master_patient_index    : {len(mpi_rows)} row(s)")
+print(f"  mpi_patient_index       : {len(mpi_patient_rows)} new UMPI(s)")
+print(f"  mpi_identity_crosswalk  : {len(crosswalk_rows)} source link(s)")
 print(f"  encounters              : {len(encounter_rows)} row(s)")
 print(f"  lab_observations        : {len(lab_rows)} row(s)")
 print(f"  diagnoses               : {len(diagnosis_rows)} row(s)")
@@ -850,8 +1032,25 @@ display(spark.sql(f"""
         lab.value_quantity,
         lab.value_unit,
         lab.loinc_map_method
-    FROM {TBL_MPI} mpi
+    FROM {TBL_MPI_PATIENTS} mpi
     LEFT JOIN {TBL_LAB_OBS} lab ON mpi.umpi = lab.umpi
     WHERE mpi.pipeline_run_id = '{pipeline_run_id}'
     ORDER BY lab.loinc_code
+"""))
+
+# COMMAND ----------
+
+display(spark.sql(f"""
+    SELECT
+        crosswalk_id,
+        umpi,
+        source_id,
+        source_mrn,
+        source_identifier_system,
+        match_method,
+        matched_on,
+        pipeline_run_id
+    FROM {TBL_MPI_XWALK}
+    WHERE pipeline_run_id = '{pipeline_run_id}'
+    ORDER BY umpi
 """))
