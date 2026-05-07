@@ -104,6 +104,7 @@ _nb01 = _load_notebook("01_ingest_hl7.py")
 _nb02 = _load_notebook("02_ingest_fhir.py")
 _nb03 = _load_notebook("03_bronze_to_silver.py")
 _nb04 = _load_notebook("04_silver_to_gold.py")
+_nb05 = _load_notebook("05_ingest_csv.py")
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -401,10 +402,6 @@ class TestDDLSchemaContracts:
 
     # -- NB03 schemas ---------------------------------------------------
 
-    def test_ingest_csv_batches_schema(self):
-        schema = _require_schema(_nb03, "INGEST_CSV_BATCHES_SCHEMA")
-        assert schema == EXPECTED_INGEST_CSV_BATCHES, _schema_diff(schema, EXPECTED_INGEST_CSV_BATCHES)
-
     def test_mpi_patient_index_schema(self):
         schema = _require_schema(_nb03, "MPI_PATIENT_INDEX_SCHEMA")
         assert schema == EXPECTED_MPI_PATIENT_INDEX, _schema_diff(schema, EXPECTED_MPI_PATIENT_INDEX)
@@ -442,3 +439,40 @@ class TestDDLSchemaContracts:
     def test_export_uscdi_v3_patient_schema(self):
         schema = _require_schema(_nb04, "EXPORT_USCDI_V3_PATIENT_SCHEMA")
         assert schema == EXPECTED_EXPORT_USCDI_V3_PATIENT, _schema_diff(schema, EXPECTED_EXPORT_USCDI_V3_PATIENT)
+
+    # -- NB05 schemas ---------------------------------------------------
+
+    def test_ingest_csv_batches_schema(self):
+        """CSV_BATCHES_SCHEMA in 05_ingest_csv.py must match ingest_csv_batches DDL."""
+        schema = _require_schema(_nb05, "CSV_BATCHES_SCHEMA")
+        assert schema == EXPECTED_INGEST_CSV_BATCHES, _schema_diff(schema, EXPECTED_INGEST_CSV_BATCHES)
+
+    def test_audit_validation_errors_schema_csv(self):
+        """VALIDATION_SCHEMA in 05_ingest_csv.py must match audit_validation_errors DDL."""
+        schema = _require_schema(_nb05, "VALIDATION_SCHEMA")
+        assert schema == EXPECTED_AUDIT_VALIDATION_ERRORS, _schema_diff(schema, EXPECTED_AUDIT_VALIDATION_ERRORS)
+
+    def test_csv_error_codes_defined(self):
+        """All CSV error code constants must be module-level strings in 05_ingest_csv.py.
+        FHIR_MISSING_TENANT is verified in 02_ingest_fhir.py where it is used inline."""
+        for constant in (
+            "CSV_MISSING_REQUIRED_FIELD",
+            "CSV_DUPLICATE_RECORD",
+            "CSV_MALFORMED_DOB",
+            "CSV_NON_NUMERIC_RESULT",
+        ):
+            assert hasattr(_nb05, constant), (
+                f"05_ingest_csv.py is missing module-level constant: {constant}"
+            )
+            assert isinstance(getattr(_nb05, constant), str), (
+                f"{constant} must be a string, got {type(getattr(_nb05, constant))}"
+            )
+            assert getattr(_nb05, constant) == constant, (
+                f"{constant} value must equal its own name, got {getattr(_nb05, constant)!r}"
+            )
+        # Verify FHIR_MISSING_TENANT is used as a literal string in 02_ingest_fhir.py
+        import inspect
+        nb02_src = inspect.getsource(_nb02._detect_fhir_validation_issues) if hasattr(_nb02, "_detect_fhir_validation_issues") else ""
+        assert "FHIR_MISSING_TENANT" in nb02_src or "FHIR_MISSING_TENANT" in str(
+            [v for v in vars(_nb02).values() if isinstance(v, str)]
+        ), "FHIR_MISSING_TENANT must appear in 02_ingest_fhir.py"
