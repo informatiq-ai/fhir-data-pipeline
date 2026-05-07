@@ -931,14 +931,13 @@ with open(ECW_PATIENTS_FILE, newline="", encoding="utf-8") as fh:
             tenant_id=TENANT_ID,
             family_name=last_name or None,
             given_name=first_name or None,
-            birth_date=dob_date.isoformat() if dob_date else None,
+            birth_date=dob_date,
             gender=gender or None,
             postal_code=zip_code,
             ssn_last4=ssn_last4,
             source_mrn=patient_id,
             source_facility_npi=pcp_npi,
             source_identifier_system=ECW_IDENTIFIER_SYSTEM,
-            source_identifier_value=patient_id,
         )
         result = mpi.resolve(identity)
         ecw_patient_umpi_map[patient_id] = result.umpi
