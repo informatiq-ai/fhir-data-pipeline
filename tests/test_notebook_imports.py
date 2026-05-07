@@ -65,3 +65,14 @@ class TestNotebookImports:
         assert hasattr(mod, "CSV_BATCHES_SCHEMA")
         assert hasattr(mod, "VALIDATION_SCHEMA")
         assert hasattr(mod, "AUDIT_INGEST_LOG_SCHEMA")
+
+    def test_nb06_bronze_to_silver_csv_loads(self):
+        mod = _load("06_bronze_to_silver_csv.py")
+        assert hasattr(mod, "MPI_PATIENT_INDEX_SCHEMA")
+        assert hasattr(mod, "MPI_IDENTITY_CROSSWALK_SCHEMA")
+        assert hasattr(mod, "CLINICAL_PATIENTS_SCHEMA")
+        assert hasattr(mod, "CLINICAL_OBSERVATIONS_SCHEMA")
+        assert hasattr(mod, "CLINICAL_CONDITIONS_SCHEMA")
+        assert hasattr(mod, "TERMINOLOGY_UNMAPPED_CODES_SCHEMA")
+        assert hasattr(mod, "AUDIT_VALIDATION_ERRORS_SCHEMA")
+        assert hasattr(mod, "AUDIT_INGEST_LOG_SCHEMA")

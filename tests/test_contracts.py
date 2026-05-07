@@ -105,6 +105,7 @@ _nb02 = _load_notebook("02_ingest_fhir.py")
 _nb03 = _load_notebook("03_bronze_to_silver.py")
 _nb04 = _load_notebook("04_silver_to_gold.py")
 _nb05 = _load_notebook("05_ingest_csv.py")
+_nb06 = _load_notebook("06_bronze_to_silver_csv.py")
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -267,6 +268,25 @@ EXPECTED_TERMINOLOGY_UNMAPPED_CODES = StructType([
     StructField("resolved_by",       StringType(),    True),
     StructField("resolved_mapping",  StringType(),    True),
     StructField("resolution_notes",  StringType(),    True),
+])
+
+EXPECTED_CLINICAL_CONDITIONS = StructType([
+    StructField("condition_id",         StringType(),    False),
+    StructField("umpi",                 StringType(),    False),
+    StructField("encounter_id",         StringType(),    True),
+    StructField("icd10_code",           StringType(),    False),
+    StructField("icd10_display",        StringType(),    True),
+    StructField("condition_category",   StringType(),    True),
+    StructField("onset_datetime",       TimestampType(), True),
+    StructField("abatement_datetime",   TimestampType(), True),
+    StructField("clinical_status",      StringType(),    True),
+    StructField("verification_status",  StringType(),    True),
+    StructField("tenant_id",            StringType(),    False),
+    StructField("source_system",        StringType(),    True),
+    StructField("source_code",          StringType(),    True),
+    StructField("source_record_id",     StringType(),    True),
+    StructField("created_at",           TimestampType(), False),
+    StructField("updated_at",           TimestampType(), True),
 ])
 
 EXPECTED_ANALYTICS_PATIENT_SUMMARY = StructType([
@@ -451,6 +471,24 @@ class TestDDLSchemaContracts:
         """VALIDATION_SCHEMA in 05_ingest_csv.py must match audit_validation_errors DDL."""
         schema = _require_schema(_nb05, "VALIDATION_SCHEMA")
         assert schema == EXPECTED_AUDIT_VALIDATION_ERRORS, _schema_diff(schema, EXPECTED_AUDIT_VALIDATION_ERRORS)
+
+    # -- NB06 schemas ---------------------------------------------------
+
+    def test_nb06_mpi_patient_index_schema(self):
+        schema = _require_schema(_nb06, "MPI_PATIENT_INDEX_SCHEMA")
+        assert schema == EXPECTED_MPI_PATIENT_INDEX, _schema_diff(schema, EXPECTED_MPI_PATIENT_INDEX)
+
+    def test_nb06_clinical_patients_schema(self):
+        schema = _require_schema(_nb06, "CLINICAL_PATIENTS_SCHEMA")
+        assert schema == EXPECTED_CLINICAL_PATIENTS, _schema_diff(schema, EXPECTED_CLINICAL_PATIENTS)
+
+    def test_nb06_clinical_observations_schema(self):
+        schema = _require_schema(_nb06, "CLINICAL_OBSERVATIONS_SCHEMA")
+        assert schema == EXPECTED_CLINICAL_OBSERVATIONS, _schema_diff(schema, EXPECTED_CLINICAL_OBSERVATIONS)
+
+    def test_nb06_clinical_conditions_schema(self):
+        schema = _require_schema(_nb06, "CLINICAL_CONDITIONS_SCHEMA")
+        assert schema == EXPECTED_CLINICAL_CONDITIONS, _schema_diff(schema, EXPECTED_CLINICAL_CONDITIONS)
 
     def test_csv_error_codes_defined(self):
         """All CSV error code constants must be module-level strings in 05_ingest_csv.py.
