@@ -712,6 +712,36 @@ TERMINOLOGY_UNMAPPED_CODES_SCHEMA = StructType([
     StructField("resolution_notes",  StringType(),    True),
 ])
 
+AUDIT_VALIDATION_ERRORS_SCHEMA = StructType([
+    StructField("error_id",          StringType(),    False),  # NOT NULL
+    StructField("pipeline_run_id",   StringType(),    True),
+    StructField("ingestion_path",    StringType(),    True),
+    StructField("source_record_id",  StringType(),    True),
+    StructField("error_code",        StringType(),    True),
+    StructField("error_message",     StringType(),    True),
+    StructField("raw_payload",       StringType(),    True),
+    StructField("tenant_id",         StringType(),    True),
+    StructField("requires_review",   BooleanType(),   True),
+    StructField("reviewed_at",       TimestampType(), True),
+    StructField("reviewed_by",       StringType(),    True),
+    StructField("review_outcome",    StringType(),    True),
+    StructField("created_at",        TimestampType(), False),  # NOT NULL
+])
+
+AUDIT_INGEST_LOG_SCHEMA = StructType([
+    StructField("log_id",            StringType(),    False),  # NOT NULL
+    StructField("pipeline_run_id",   StringType(),    False),  # NOT NULL
+    StructField("ingestion_path",    StringType(),    True),
+    StructField("source_table",      StringType(),    True),
+    StructField("record_count",      LongType(),      True),
+    StructField("pass_count",        LongType(),      True),
+    StructField("error_count",       LongType(),      True),
+    StructField("tenant_id",         StringType(),    True),
+    StructField("run_started_at",    TimestampType(), True),
+    StructField("run_completed_at",  TimestampType(), True),
+    StructField("logged_at",         TimestampType(), False),  # NOT NULL
+])
+
 if fhir_mpi_rows:
     mpi_df = spark.createDataFrame(fhir_mpi_rows, schema=MPI_PATIENT_INDEX_SCHEMA)
     mpi_df.write.format("delta").mode("append").insertInto(TBL_MPI_PATIENTS)
