@@ -602,11 +602,28 @@ print(f"New UMPIs minted       : {len(fhir_mpi_rows)}")
 # COMMAND ----------
 
 from pyspark.sql.types import (
-    StructType, StructField, StringType, TimestampType,
-    LongType, BooleanType, DoubleType, ArrayType, DateType
+    ArrayType, BooleanType, DateType, DoubleType, LongType,
+    StringType, StructField, StructType, TimestampType,
 )
 
-mpi_schema = StructType([
+# Module-level constants — consumed by tests/test_contracts.py for DDL alignment checks.
+# Names match databricks/fhir_pipeline_ddl.sql table names.  Do not rename.
+
+INGEST_CSV_BATCHES_SCHEMA = StructType([
+    StructField("batch_id",          StringType(),    False),  # NOT NULL
+    StructField("raw_payload",       StringType(),    False),  # NOT NULL
+    StructField("source_system",     StringType(),    True),
+    StructField("batch_frequency",   StringType(),    True),
+    StructField("file_name",         StringType(),    True),
+    StructField("file_size_bytes",   LongType(),      True),
+    StructField("row_count",         LongType(),      True),
+    StructField("tenant_id",         StringType(),    False),  # NOT NULL
+    StructField("received_at",       TimestampType(), False),  # NOT NULL
+    StructField("validation_status", StringType(),    True),
+    StructField("pipeline_run_id",   StringType(),    True),
+])
+
+MPI_PATIENT_INDEX_SCHEMA = StructType([
     StructField("umpi",                StringType(),            False),  # NOT NULL
     StructField("resolution_method",   StringType(),            True),
     StructField("first_resolved_at",   TimestampType(),         True),
@@ -617,8 +634,86 @@ mpi_schema = StructType([
     StructField("merged_into_umpi",    StringType(),            True),
 ])
 
+MPI_IDENTITY_CROSSWALK_SCHEMA = StructType([
+    StructField("crosswalk_id",     StringType(),    False),  # NOT NULL
+    StructField("umpi",             StringType(),    False),  # NOT NULL
+    StructField("source_mrn",       StringType(),    False),  # NOT NULL
+    StructField("tenant_id",        StringType(),    False),  # NOT NULL
+    StructField("source_system",    StringType(),    True),
+    StructField("facility_id",      StringType(),    True),
+    StructField("match_confidence", DoubleType(),    True),
+    StructField("created_at",       TimestampType(), False),  # NOT NULL
+    StructField("updated_at",       TimestampType(), True),
+])
+
+CLINICAL_PATIENTS_SCHEMA = StructType([
+    StructField("patient_id",         StringType(),    False),  # NOT NULL
+    StructField("umpi",               StringType(),    False),  # NOT NULL
+    StructField("first_name",         StringType(),    True),
+    StructField("last_name",          StringType(),    True),
+    StructField("date_of_birth",      DateType(),      True),
+    StructField("gender",             StringType(),    True),
+    StructField("race",               StringType(),    True),
+    StructField("ethnicity",          StringType(),    True),
+    StructField("preferred_language", StringType(),    True),
+    StructField("address_line1",      StringType(),    True),
+    StructField("address_line2",      StringType(),    True),
+    StructField("city",               StringType(),    True),
+    StructField("state",              StringType(),    True),
+    StructField("zip",                StringType(),    True),
+    StructField("phone",              StringType(),    True),
+    StructField("email",              StringType(),    True),
+    StructField("tenant_id",          StringType(),    False),  # NOT NULL
+    StructField("source_system",      StringType(),    True),
+    StructField("source_record_id",   StringType(),    True),
+    StructField("created_at",         TimestampType(), False),  # NOT NULL
+    StructField("updated_at",         TimestampType(), True),
+])
+
+CLINICAL_OBSERVATIONS_SCHEMA = StructType([
+    StructField("observation_id",        StringType(),    False),  # NOT NULL
+    StructField("umpi",                  StringType(),    False),  # NOT NULL
+    StructField("encounter_id",          StringType(),    True),
+    StructField("loinc_code",            StringType(),    False),  # NOT NULL
+    StructField("loinc_display",         StringType(),    True),
+    StructField("value_quantity",        DoubleType(),    True),
+    StructField("value_unit",            StringType(),    True),
+    StructField("value_string",          StringType(),    True),
+    StructField("value_codeable_code",   StringType(),    True),
+    StructField("value_codeable_system", StringType(),    True),
+    StructField("reference_range_low",   DoubleType(),    True),
+    StructField("reference_range_high",  DoubleType(),    True),
+    StructField("interpretation",        StringType(),    True),
+    StructField("observation_datetime",  TimestampType(), True),
+    StructField("status",                StringType(),    True),
+    StructField("tenant_id",             StringType(),    False),  # NOT NULL
+    StructField("source_system",         StringType(),    True),
+    StructField("source_code",           StringType(),    True),
+    StructField("source_record_id",      StringType(),    True),
+    StructField("created_at",            TimestampType(), False),  # NOT NULL
+    StructField("updated_at",            TimestampType(), True),
+])
+
+TERMINOLOGY_UNMAPPED_CODES_SCHEMA = StructType([
+    StructField("unmapped_id",       StringType(),    False),  # NOT NULL
+    StructField("source_code",       StringType(),    False),  # NOT NULL
+    StructField("source_display",    StringType(),    True),
+    StructField("target_system",     StringType(),    False),  # NOT NULL
+    StructField("source_system",     StringType(),    True),
+    StructField("record_type",       StringType(),    True),
+    StructField("source_record_id",  StringType(),    True),
+    StructField("tenant_id",         StringType(),    False),  # NOT NULL
+    StructField("pipeline_run_id",   StringType(),    True),
+    StructField("logged_at",         TimestampType(), False),  # NOT NULL
+    StructField("resolved",          BooleanType(),   True),
+    StructField("resolved_at",       TimestampType(), True),
+    StructField("resolved_by",       StringType(),    True),
+    StructField("resolved_mapping",  StringType(),    True),
+    StructField("resolution_notes",  StringType(),    True),
+])
+
 if fhir_mpi_rows:
-    mpi_df = spark.createDataFrame(fhir_mpi_rows, schema=mpi_schema)
+    mpi_df = spark.createDataFrame(fhir_mpi_rows, schema=MPI_PATIENT_INDEX_SCHEMA)
     mpi_df.write.format("delta").mode("append").insertInto(TBL_MPI_PATIENTS)
     print(f"Wrote {len(fhir_mpi_rows)} new UMPI row(s) to {TBL_MPI_PATIENTS}")
 else:
@@ -631,20 +726,8 @@ else:
 
 # COMMAND ----------
 
-xwalk_schema = StructType([
-    StructField("crosswalk_id",    StringType(),    False),  # NOT NULL
-    StructField("umpi",            StringType(),    False),  # NOT NULL
-    StructField("source_mrn",      StringType(),    False),  # NOT NULL
-    StructField("tenant_id",       StringType(),    False),  # NOT NULL
-    StructField("source_system",   StringType(),    True),
-    StructField("facility_id",     StringType(),    True),
-    StructField("match_confidence", DoubleType(),   True),
-    StructField("created_at",      TimestampType(), False),  # NOT NULL
-    StructField("updated_at",      TimestampType(), True),
-])
-
 if fhir_xwalk_rows:
-    xwalk_df = spark.createDataFrame(fhir_xwalk_rows, schema=xwalk_schema)
+    xwalk_df = spark.createDataFrame(fhir_xwalk_rows, schema=MPI_IDENTITY_CROSSWALK_SCHEMA)
     xwalk_df.write.format("delta").mode("append").insertInto(TBL_MPI_XWALK)
     print(f"Wrote {len(fhir_xwalk_rows)} crosswalk row(s) to {TBL_MPI_XWALK}")
 else:
@@ -657,32 +740,8 @@ else:
 
 # COMMAND ----------
 
-clinical_patients_schema = StructType([
-    StructField("patient_id",         StringType(),  False),  # NOT NULL
-    StructField("umpi",               StringType(),  False),  # NOT NULL
-    StructField("first_name",         StringType(),  True),
-    StructField("last_name",          StringType(),  True),
-    StructField("date_of_birth",      DateType(),    True),
-    StructField("gender",             StringType(),  True),
-    StructField("race",               StringType(),  True),
-    StructField("ethnicity",          StringType(),  True),
-    StructField("preferred_language", StringType(),  True),
-    StructField("address_line1",      StringType(),  True),
-    StructField("address_line2",      StringType(),  True),
-    StructField("city",               StringType(),  True),
-    StructField("state",              StringType(),  True),
-    StructField("zip",                StringType(),  True),
-    StructField("phone",              StringType(),  True),
-    StructField("email",              StringType(),  True),
-    StructField("tenant_id",          StringType(),  False),  # NOT NULL
-    StructField("source_system",      StringType(),  True),
-    StructField("source_record_id",   StringType(),  True),
-    StructField("created_at",         TimestampType(), False),  # NOT NULL
-    StructField("updated_at",         TimestampType(), True),
-])
-
 if fhir_patient_rows:
-    cp_df = spark.createDataFrame(fhir_patient_rows, schema=clinical_patients_schema)
+    cp_df = spark.createDataFrame(fhir_patient_rows, schema=CLINICAL_PATIENTS_SCHEMA)
     cp_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_PATIENTS)
     print(f"Wrote {len(fhir_patient_rows)} FHIR patient row(s) to {TBL_CLINICAL_PATIENTS}")
 else:
@@ -777,32 +836,8 @@ print(f"\nFHIR observations built : {len(fhir_obs_rows)} mapped, "
 
 # COMMAND ----------
 
-clinical_obs_schema = StructType([
-    StructField("observation_id",        StringType(),    False),  # NOT NULL
-    StructField("umpi",                  StringType(),    False),  # NOT NULL
-    StructField("encounter_id",          StringType(),    True),
-    StructField("loinc_code",            StringType(),    False),  # NOT NULL
-    StructField("loinc_display",         StringType(),    True),
-    StructField("value_quantity",        DoubleType(),    True),
-    StructField("value_unit",            StringType(),    True),
-    StructField("value_string",          StringType(),    True),
-    StructField("value_codeable_code",   StringType(),    True),
-    StructField("value_codeable_system", StringType(),    True),
-    StructField("reference_range_low",   DoubleType(),    True),
-    StructField("reference_range_high",  DoubleType(),    True),
-    StructField("interpretation",        StringType(),    True),
-    StructField("observation_datetime",  TimestampType(), True),
-    StructField("status",                StringType(),    True),
-    StructField("tenant_id",             StringType(),    False),  # NOT NULL
-    StructField("source_system",         StringType(),    True),
-    StructField("source_code",           StringType(),    True),
-    StructField("source_record_id",      StringType(),    True),
-    StructField("created_at",            TimestampType(), False),  # NOT NULL
-    StructField("updated_at",            TimestampType(), True),
-])
-
 if fhir_obs_rows:
-    obs_df = spark.createDataFrame(fhir_obs_rows, schema=clinical_obs_schema)
+    obs_df = spark.createDataFrame(fhir_obs_rows, schema=CLINICAL_OBSERVATIONS_SCHEMA)
     obs_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_OBS)
     print(f"Wrote {len(fhir_obs_rows)} FHIR observation row(s) to {TBL_CLINICAL_OBS}")
 else:
@@ -815,26 +850,8 @@ else:
 
 # COMMAND ----------
 
-unmapped_schema = StructType([
-    StructField("unmapped_id",       StringType(),    False),  # NOT NULL
-    StructField("source_code",       StringType(),    False),  # NOT NULL
-    StructField("source_display",    StringType(),    True),
-    StructField("target_system",     StringType(),    False),  # NOT NULL
-    StructField("source_system",     StringType(),    True),
-    StructField("record_type",       StringType(),    True),
-    StructField("source_record_id",  StringType(),    True),
-    StructField("tenant_id",         StringType(),    False),  # NOT NULL
-    StructField("pipeline_run_id",   StringType(),    True),
-    StructField("logged_at",         TimestampType(), False),  # NOT NULL
-    StructField("resolved",          BooleanType(),   True),
-    StructField("resolved_at",       TimestampType(), True),
-    StructField("resolved_by",       StringType(),    True),
-    StructField("resolved_mapping",  StringType(),    True),
-    StructField("resolution_notes",  StringType(),    True),
-])
-
 if fhir_unmapped_rows:
-    unmapped_df = spark.createDataFrame(fhir_unmapped_rows, schema=unmapped_schema)
+    unmapped_df = spark.createDataFrame(fhir_unmapped_rows, schema=TERMINOLOGY_UNMAPPED_CODES_SCHEMA)
     unmapped_df.write.format("delta").mode("append").insertInto(TBL_UNMAPPED)
     print(f"Wrote {len(fhir_unmapped_rows)} FHIR unmapped code(s) to {TBL_UNMAPPED}")
 else:
@@ -1016,17 +1033,17 @@ print(f"Validation issues       : {len(csv_validation_errs)}")
 # COMMAND ----------
 
 if csv_patient_rows:
-    cp_csv_df = spark.createDataFrame(csv_patient_rows, schema=clinical_patients_schema)
+    cp_csv_df = spark.createDataFrame(csv_patient_rows, schema=CLINICAL_PATIENTS_SCHEMA)
     cp_csv_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_PATIENTS)
     print(f"Wrote {cp_csv_df.count():,} ECW patient row(s) to {TBL_CLINICAL_PATIENTS}")
 
 if csv_mpi_rows:
-    mpi_csv_df = spark.createDataFrame(csv_mpi_rows, schema=mpi_schema)
+    mpi_csv_df = spark.createDataFrame(csv_mpi_rows, schema=MPI_PATIENT_INDEX_SCHEMA)
     mpi_csv_df.write.format("delta").mode("append").insertInto(TBL_MPI_PATIENTS)
     print(f"Wrote {len(csv_mpi_rows)} new UMPI(s) to {TBL_MPI_PATIENTS}")
 
 if csv_xwalk_rows:
-    xwalk_csv_df = spark.createDataFrame(csv_xwalk_rows, schema=xwalk_schema)
+    xwalk_csv_df = spark.createDataFrame(csv_xwalk_rows, schema=MPI_IDENTITY_CROSSWALK_SCHEMA)
     xwalk_csv_df.write.format("delta").mode("append").insertInto(TBL_MPI_XWALK)
     print(f"Wrote {len(csv_xwalk_rows)} crosswalk row(s) to {TBL_MPI_XWALK}")
 
@@ -1155,13 +1172,13 @@ print(f"Text result values      : {sum(1 for r in csv_obs_rows if r['value_quant
 # COMMAND ----------
 
 if csv_obs_rows:
-    obs_csv_df = spark.createDataFrame(csv_obs_rows, schema=clinical_obs_schema)
+    obs_csv_df = spark.createDataFrame(csv_obs_rows, schema=CLINICAL_OBSERVATIONS_SCHEMA)
     obs_csv_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_OBS)
     print(f"Wrote {obs_csv_df.count():,} ECW observation row(s) to {TBL_CLINICAL_OBS}")
 
 all_unmapped = fhir_unmapped_rows + csv_unmapped_rows
 if csv_unmapped_rows:
-    unmapped_csv_df = spark.createDataFrame(csv_unmapped_rows, schema=unmapped_schema)
+    unmapped_csv_df = spark.createDataFrame(csv_unmapped_rows, schema=TERMINOLOGY_UNMAPPED_CODES_SCHEMA)
     unmapped_csv_df.write.format("delta").mode("append").insertInto(TBL_UNMAPPED)
     print(f"Wrote {len(csv_unmapped_rows)} ECW unmapped code(s) to {TBL_UNMAPPED}")
 
@@ -1172,44 +1189,12 @@ if csv_unmapped_rows:
 
 # COMMAND ----------
 
-from pyspark.sql.types import LongType
-
-validation_schema = StructType([
-    StructField("error_id",         StringType(),    False),  # NOT NULL
-    StructField("pipeline_run_id",  StringType(),    True),
-    StructField("ingestion_path",   StringType(),    True),
-    StructField("source_record_id", StringType(),    True),
-    StructField("error_code",       StringType(),    True),
-    StructField("error_message",    StringType(),    True),
-    StructField("raw_payload",      StringType(),    True),
-    StructField("tenant_id",        StringType(),    True),
-    StructField("requires_review",  BooleanType(),   True),
-    StructField("reviewed_at",      TimestampType(), True),
-    StructField("reviewed_by",      StringType(),    True),
-    StructField("review_outcome",   StringType(),    True),
-    StructField("created_at",       TimestampType(), False),  # NOT NULL
-])
-
 if csv_validation_errs:
-    val_df_csv = spark.createDataFrame(csv_validation_errs, schema=validation_schema)
+    val_df_csv = spark.createDataFrame(csv_validation_errs, schema=AUDIT_VALIDATION_ERRORS_SCHEMA)
     val_df_csv.write.format("delta").mode("append").insertInto(BRONZE_VALIDATION_TABLE)
     print(f"Wrote {val_df_csv.count():,} CSV validation error(s) to {BRONZE_VALIDATION_TABLE}")
 else:
     print("No CSV validation errors")
-
-audit_schema = StructType([
-    StructField("log_id",           StringType(),    False),  # NOT NULL
-    StructField("pipeline_run_id",  StringType(),    False),  # NOT NULL
-    StructField("ingestion_path",   StringType(),    True),
-    StructField("source_table",     StringType(),    True),
-    StructField("record_count",     LongType(),      True),
-    StructField("pass_count",       LongType(),      True),
-    StructField("error_count",      LongType(),      True),
-    StructField("tenant_id",        StringType(),    True),
-    StructField("run_started_at",   TimestampType(), True),
-    StructField("run_completed_at", TimestampType(), True),
-    StructField("logged_at",        TimestampType(), False),  # NOT NULL
-])
 
 csv_audit_entries = [
     {
@@ -1240,7 +1225,7 @@ csv_audit_entries = [
     },
 ]
 
-audit_df_csv = spark.createDataFrame(csv_audit_entries, schema=audit_schema)
+audit_df_csv = spark.createDataFrame(csv_audit_entries, schema=AUDIT_INGEST_LOG_SCHEMA)
 audit_df_csv.write.format("delta").mode("append").insertInto(BRONZE_AUDIT_TABLE)
 print(f"CSV audit entries written to {BRONZE_AUDIT_TABLE}")
 
