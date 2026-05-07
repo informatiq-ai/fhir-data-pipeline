@@ -3,7 +3,7 @@
 End-to-end run of the `fhir-data-pipeline` reference implementation against synthetic clinical data. All scripts executed against the samples in `data/synthetic/` with no database connection required.
 
 **Environment:** Python 3.12.13 · pytest 9.0.3  
-**Test suite:** 79 tests · 0 failures · 0 skipped  
+**Test suite:** 85 tests · 0 failures · 0 skipped  
 **Dependencies:** `hl7apy` · `fhir.resources` · `pytest`
 
 ---
@@ -18,7 +18,7 @@ Parse successful.
   tenant_id:       INTEGRIS_BAPTIST
   message_type:    ADT^A01^ADT_A01
   feed_type:       ADT
-  message_id:      c900f2f3-8532-45fa-b0ad-2081d9387fec
+  message_id:      84304375-1eda-490d-ba86-e11ac049e433
   control_id:      MSG20240315082301
   message_ts:      2024-03-15T08:23:01
   raw_payload len: 1827 chars
@@ -83,21 +83,21 @@ Encounter, Observation, Condition) are in the supported set and none were droppe
 ```
 
 Resolution result:
-  umpi:             c2c9af9d-4501-4180-8064-7661a667881d
+  umpi:             0cd2faf4-6c3b-4990-b9a0-38b5807ebffc
   match_method:     NEW_RECORD
   match_confidence: 0.0
   is_new_record:    True
   matched_on:       []
 
 Second resolution (should match):
-  umpi:             c2c9af9d-4501-4180-8064-7661a667881d
+  umpi:             0cd2faf4-6c3b-4990-b9a0-38b5807ebffc
   match_method:     DETERMINISTIC
   is_new_record:    False
   ✓ UMPI consistent across resolutions
 
 Total patients in MPI: 1
-DEBUG MPI new record minted: umpi=c2c9af9d-4501-4180-8064-7661a667881d tenant=INTEGRIS_BAPTIST
-DEBUG MPI match (identifier system+value): umpi=c2c9af9d-4501-4180-8064-7661a667881d
+DEBUG MPI new record minted: umpi=0cd2faf4-6c3b-4990-b9a0-38b5807ebffc tenant=INTEGRIS_BAPTIST
+DEBUG MPI match (identifier system+value): umpi=0cd2faf4-6c3b-4990-b9a0-38b5807ebffc
 ```
 
 **What this demonstrates:**
@@ -165,7 +165,7 @@ service fallback path (simulating an eClinicalWorks CSV where the source sends
 ```
 
 === Patient Summary ===
-  patient_key:        feaac8944b95ca9c...
+  patient_key:        a952bcfe051fde20...
   full_name:          Carlos Ramirez
   age:                49
   charlson_index:     2
@@ -222,7 +222,7 @@ same calendar day.
 **Runner:** `python -m pytest tests/ -v`
 
 ```
-79 passed in 0.27s
+85 passed in 0.31s
 ```
 
 | Test Class | Tests | Coverage |
