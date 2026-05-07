@@ -18,7 +18,7 @@ Parse successful.
   tenant_id:       INTEGRIS_BAPTIST
   message_type:    ADT^A01^ADT_A01
   feed_type:       ADT
-  message_id:      fee369e2-e8e3-448b-9afa-2517b0f7ff6b
+  message_id:      3d7561a8-0bdd-4cb7-87ac-d4cfe2772fd4
   control_id:      MSG20240315082301
   message_ts:      2024-03-15T08:23:01
   raw_payload len: 1827 chars
@@ -83,21 +83,21 @@ Encounter, Observation, Condition) are in the supported set and none were droppe
 ```
 
 Resolution result:
-  umpi:             57c90a67-7a2d-4fa2-9ef6-981f598c00e3
+  umpi:             6c9174c9-6bad-4015-916c-81bf8d264a10
   match_method:     NEW_RECORD
   match_confidence: 0.0
   is_new_record:    True
   matched_on:       []
 
 Second resolution (should match):
-  umpi:             57c90a67-7a2d-4fa2-9ef6-981f598c00e3
+  umpi:             6c9174c9-6bad-4015-916c-81bf8d264a10
   match_method:     DETERMINISTIC
   is_new_record:    False
   ✓ UMPI consistent across resolutions
 
 Total patients in MPI: 1
-DEBUG MPI new record minted: umpi=57c90a67-7a2d-4fa2-9ef6-981f598c00e3 tenant=INTEGRIS_BAPTIST
-DEBUG MPI match (identifier system+value): umpi=57c90a67-7a2d-4fa2-9ef6-981f598c00e3
+DEBUG MPI new record minted: umpi=6c9174c9-6bad-4015-916c-81bf8d264a10 tenant=INTEGRIS_BAPTIST
+DEBUG MPI match (identifier system+value): umpi=6c9174c9-6bad-4015-916c-81bf8d264a10
 ```
 
 **What this demonstrates:**
@@ -165,7 +165,7 @@ service fallback path (simulating an eClinicalWorks CSV where the source sends
 ```
 
 === Patient Summary ===
-  patient_key:        7a48cbb98a14a735...
+  patient_key:        42f4b6259aee8c85...
   full_name:          Carlos Ramirez
   age:                49
   charlson_index:     2
@@ -222,7 +222,7 @@ same calendar day.
 **Runner:** `python -m pytest tests/ -v`
 
 ```
-84 passed in 0.26s
+84 passed in 0.31s
 ```
 
 | Test Class | Tests | Coverage |
