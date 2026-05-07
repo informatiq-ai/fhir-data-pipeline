@@ -58,12 +58,15 @@ BRONZE_FHIR_TABLE  = f"{SRC_CATALOG}.{SRC_SCHEMA}.ingest_fhir_bundles"
 NOTEBOOK_NAME      = "03_bronze_to_silver"
 PIPELINE_VERSION   = "1.0.0"
 
-TBL_MPI_PATIENTS      = f"{TGT_CATALOG}.{TGT_SCHEMA}.mpi_patient_index"
-TBL_MPI_XWALK         = f"{TGT_CATALOG}.{TGT_SCHEMA}.mpi_identity_crosswalk"
-TBL_CLINICAL_PATIENTS = f"{TGT_CATALOG}.{TGT_SCHEMA}.clinical_patients"
-TBL_CLINICAL_OBS      = f"{TGT_CATALOG}.{TGT_SCHEMA}.clinical_observations"
-TBL_UNMAPPED          = f"{TGT_CATALOG}.{TGT_SCHEMA}.terminology_unmapped_codes"
+TBL_MPI_PATIENTS         = f"{TGT_CATALOG}.{TGT_SCHEMA}.mpi_patient_index"
+TBL_MPI_XWALK            = f"{TGT_CATALOG}.{TGT_SCHEMA}.mpi_identity_crosswalk"
+TBL_CLINICAL_PATIENTS    = f"{TGT_CATALOG}.{TGT_SCHEMA}.clinical_patients"
+TBL_CLINICAL_ENCOUNTERS  = f"{TGT_CATALOG}.{TGT_SCHEMA}.clinical_encounters"
+TBL_CLINICAL_CONDITIONS  = f"{TGT_CATALOG}.{TGT_SCHEMA}.clinical_conditions"
+TBL_CLINICAL_OBS         = f"{TGT_CATALOG}.{TGT_SCHEMA}.clinical_observations"
+TBL_UNMAPPED             = f"{TGT_CATALOG}.{TGT_SCHEMA}.terminology_unmapped_codes"
 
+BRONZE_HL7_TABLE        = f"{SRC_CATALOG}.{SRC_SCHEMA}.ingest_hl7_messages"
 BRONZE_AUDIT_TABLE      = f"{SRC_CATALOG}.{SRC_SCHEMA}.audit_ingest_log"
 BRONZE_VALIDATION_TABLE = f"{SRC_CATALOG}.{SRC_SCHEMA}.audit_validation_errors"
 
@@ -257,6 +260,54 @@ spark.sql(f"""
 """)
 
 spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {TBL_CLINICAL_ENCOUNTERS} (
+        encounter_id          STRING    NOT NULL  COMMENT 'UUID (Silver internal)',
+        umpi                  STRING    NOT NULL  COMMENT 'FK to mpi_patient_index',
+        encounter_class       STRING              COMMENT 'IMP | AMB | EMER | VR (HL7 ActEncounterCode)',
+        encounter_type        STRING              COMMENT 'Snomed/local type code',
+        status                STRING              COMMENT 'planned | in-progress | finished | cancelled',
+        admit_datetime        TIMESTAMP,
+        discharge_datetime    TIMESTAMP,
+        length_of_stay_hours  DOUBLE              COMMENT 'Derived: discharge - admit in hours',
+        facility_id           STRING              COMMENT 'NPI or internal facility code',
+        attending_provider_npi STRING,
+        principal_icd10       STRING              COMMENT 'Principal diagnosis ICD-10 code (denormalized)',
+        tenant_id             STRING    NOT NULL,
+        source_system         STRING,
+        source_record_id      STRING,
+        created_at            TIMESTAMP NOT NULL,
+        updated_at            TIMESTAMP
+    )
+    USING DELTA
+    COMMENT 'Normalized encounters across all ingestion paths.'
+    TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+""")
+
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {TBL_CLINICAL_CONDITIONS} (
+        condition_id          STRING    NOT NULL,
+        umpi                  STRING    NOT NULL,
+        encounter_id          STRING,
+        icd10_code            STRING    NOT NULL  COMMENT 'Normalized ICD-10 code',
+        icd10_display         STRING,
+        condition_category    STRING              COMMENT 'primary | secondary | comorbidity',
+        onset_datetime        TIMESTAMP,
+        abatement_datetime    TIMESTAMP,
+        clinical_status       STRING              COMMENT 'active | recurrence | relapse | inactive | remission | resolved',
+        verification_status   STRING              COMMENT 'confirmed | provisional | differential | refuted',
+        tenant_id             STRING    NOT NULL,
+        source_system         STRING,
+        source_code           STRING,
+        source_record_id      STRING,
+        created_at            TIMESTAMP NOT NULL,
+        updated_at            TIMESTAMP
+    )
+    USING DELTA
+    COMMENT 'ICD-10 normalized conditions and diagnoses.'
+    TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+""")
+
+spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {BRONZE_AUDIT_TABLE} (
         log_id            STRING    NOT NULL,
         pipeline_run_id   STRING    NOT NULL,
@@ -311,6 +362,8 @@ print("Silver tables verified")
 spark.sql(f"TRUNCATE TABLE {TBL_MPI_PATIENTS}")
 spark.sql(f"TRUNCATE TABLE {TBL_MPI_XWALK}")
 spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_PATIENTS}")
+spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_ENCOUNTERS}")
+spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_CONDITIONS}")
 spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_OBS}")
 
 print("Silver tables truncated (development mode)")
@@ -471,6 +524,45 @@ def _unmapped_row(source_code, source_display, target_system, source_system,
         "resolved_mapping":  None,
         "resolution_notes":  None,
     }
+
+
+def _parse_hl7_date(s):
+    """Parse HL7 v2 date (YYYYMMDD) to a date object for MPI PatientIdentity."""
+    if not s:
+        return None
+    s = s.strip()
+    try:
+        return datetime.strptime(s[:8], "%Y%m%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_hl7_datetime(s):
+    """Parse HL7 v2 timestamp (YYYYMMDD[HHMMSS]) to naive UTC datetime."""
+    if not s:
+        return None
+    s = s.strip()
+    try:
+        if len(s) >= 14:
+            return datetime.strptime(s[:14], "%Y%m%d%H%M%S")
+        if len(s) >= 8:
+            return datetime.strptime(s[:8], "%Y%m%d")
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+def _parse_hl7_segments(raw_payload):
+    """Split a raw HL7 v2 message into a dict of {segment_name: [fields_list]}."""
+    segs = {}
+    for line in raw_payload.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("|")
+        seg_name = parts[0]
+        segs.setdefault(seg_name, []).append(parts)
+    return segs
 
 
 def _csv_validation_error(code, field, detail, source_file, row_id, raw_val, run_id):
@@ -742,6 +834,44 @@ AUDIT_INGEST_LOG_SCHEMA = StructType([
     StructField("logged_at",         TimestampType(), False),  # NOT NULL
 ])
 
+CLINICAL_ENCOUNTERS_SCHEMA = StructType([
+    StructField("encounter_id",           StringType(),    False),  # NOT NULL
+    StructField("umpi",                   StringType(),    False),  # NOT NULL
+    StructField("encounter_class",        StringType(),    True),
+    StructField("encounter_type",         StringType(),    True),
+    StructField("status",                 StringType(),    True),
+    StructField("admit_datetime",         TimestampType(), True),
+    StructField("discharge_datetime",     TimestampType(), True),
+    StructField("length_of_stay_hours",   DoubleType(),    True),
+    StructField("facility_id",            StringType(),    True),
+    StructField("attending_provider_npi", StringType(),    True),
+    StructField("principal_icd10",        StringType(),    True),
+    StructField("tenant_id",              StringType(),    False),  # NOT NULL
+    StructField("source_system",          StringType(),    True),
+    StructField("source_record_id",       StringType(),    True),
+    StructField("created_at",             TimestampType(), False),  # NOT NULL
+    StructField("updated_at",             TimestampType(), True),
+])
+
+CLINICAL_CONDITIONS_SCHEMA = StructType([
+    StructField("condition_id",         StringType(),    False),  # NOT NULL
+    StructField("umpi",                 StringType(),    False),  # NOT NULL
+    StructField("encounter_id",         StringType(),    True),
+    StructField("icd10_code",           StringType(),    False),  # NOT NULL
+    StructField("icd10_display",        StringType(),    True),
+    StructField("condition_category",   StringType(),    True),
+    StructField("onset_datetime",       TimestampType(), True),
+    StructField("abatement_datetime",   TimestampType(), True),
+    StructField("clinical_status",      StringType(),    True),
+    StructField("verification_status",  StringType(),    True),
+    StructField("tenant_id",            StringType(),    False),  # NOT NULL
+    StructField("source_system",        StringType(),    True),
+    StructField("source_code",          StringType(),    True),
+    StructField("source_record_id",     StringType(),    True),
+    StructField("created_at",           TimestampType(), False),  # NOT NULL
+    StructField("updated_at",           TimestampType(), True),
+])
+
 if fhir_mpi_rows:
     mpi_df = spark.createDataFrame(fhir_mpi_rows, schema=MPI_PATIENT_INDEX_SCHEMA)
     mpi_df.write.format("delta").mode("append").insertInto(TBL_MPI_PATIENTS)
@@ -890,6 +1020,326 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Pass 3 — FHIR Encounter → clinical_encounters
+
+# COMMAND ----------
+
+fhir_encounter_rows = []
+
+for rec in by_type.get("Encounter", []):
+    resource      = rec["resource"]
+    bundle_id     = rec["bundle_id"]
+    fhir_id       = resource.get("id", str(uuid.uuid4()))
+    source_rec_id = f"{bundle_id}/{fhir_id}"
+
+    subject_ref = resource.get("subject", {}).get("reference", "")
+    fhir_pat_id = subject_ref.split("/")[-1].replace("urn:uuid:", "")
+    umpi = patient_umpi_map.get(subject_ref) or patient_umpi_map.get(fhir_pat_id)
+
+    if not umpi:
+        print(f"  WARN: No UMPI for Encounter subject '{subject_ref}' — skipping")
+        continue
+
+    period       = resource.get("period", {})
+    admit_dt     = _parse_obs_datetime(period.get("start"))
+    discharge_dt = _parse_obs_datetime(period.get("end"))
+
+    los_hours = None
+    if admit_dt and discharge_dt:
+        los_hours = (discharge_dt - admit_dt).total_seconds() / 3600.0
+
+    encounter_id    = str(uuid.uuid4())
+    encounter_class = resource.get("class", {}).get("code")
+    facility_id     = resource.get("serviceProvider", {}).get("display")
+
+    fhir_encounter_rows.append({
+        "encounter_id":           encounter_id,
+        "umpi":                   umpi,
+        "encounter_class":        encounter_class,
+        "encounter_type":         None,
+        "status":                 resource.get("status"),
+        "admit_datetime":         admit_dt,
+        "discharge_datetime":     discharge_dt,
+        "length_of_stay_hours":   los_hours,
+        "facility_id":            facility_id,
+        "attending_provider_npi": None,
+        "principal_icd10":        None,
+        "tenant_id":              TENANT_ID,
+        "source_system":          "FHIR_R4",
+        "source_record_id":       source_rec_id,
+        "created_at":             now_ts,
+        "updated_at":             None,
+    })
+
+print(f"FHIR encounters built: {len(fhir_encounter_rows)}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Write clinical_encounters — FHIR
+
+# COMMAND ----------
+
+if fhir_encounter_rows:
+    enc_fhir_df = spark.createDataFrame(fhir_encounter_rows, schema=CLINICAL_ENCOUNTERS_SCHEMA)
+    enc_fhir_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_ENCOUNTERS)
+    print(f"Wrote {len(fhir_encounter_rows)} FHIR encounter row(s) to {TBL_CLINICAL_ENCOUNTERS}")
+else:
+    print("No FHIR Encounter resources — clinical_encounters (FHIR) not written")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Pass 4 — FHIR Condition → clinical_conditions
+
+# COMMAND ----------
+
+fhir_condition_rows = []
+
+for rec in by_type.get("Condition", []):
+    resource      = rec["resource"]
+    bundle_id     = rec["bundle_id"]
+    fhir_id       = resource.get("id", str(uuid.uuid4()))
+    source_rec_id = f"{bundle_id}/{fhir_id}"
+
+    subject_ref = resource.get("subject", {}).get("reference", "")
+    fhir_pat_id = subject_ref.split("/")[-1].replace("urn:uuid:", "")
+    umpi = patient_umpi_map.get(subject_ref) or patient_umpi_map.get(fhir_pat_id)
+
+    if not umpi:
+        print(f"  WARN: No UMPI for Condition subject '{subject_ref}' — skipping")
+        continue
+
+    codings    = (resource.get("code", {}).get("coding") or [{}])
+    icd10_code = codings[0].get("code") if codings else None
+    icd10_disp = codings[0].get("display") if codings else None
+
+    if not icd10_code:
+        print(f"  WARN: Condition {fhir_id} has no code — skipping")
+        continue
+
+    clin_status   = ((resource.get("clinicalStatus", {}).get("coding") or [{}])[0]).get("code")
+    verif_status  = ((resource.get("verificationStatus", {}).get("coding") or [{}])[0]).get("code")
+    onset_dt      = _parse_obs_datetime(resource.get("onsetDateTime"))
+    abatement_dt  = _parse_obs_datetime(resource.get("abatementDateTime"))
+
+    fhir_condition_rows.append({
+        "condition_id":         str(uuid.uuid4()),
+        "umpi":                 umpi,
+        "encounter_id":         None,
+        "icd10_code":           icd10_code,
+        "icd10_display":        icd10_disp,
+        "condition_category":   "primary",
+        "onset_datetime":       onset_dt,
+        "abatement_datetime":   abatement_dt,
+        "clinical_status":      clin_status,
+        "verification_status":  verif_status,
+        "tenant_id":            TENANT_ID,
+        "source_system":        "FHIR_R4",
+        "source_code":          icd10_code,
+        "source_record_id":     source_rec_id,
+        "created_at":           now_ts,
+        "updated_at":           None,
+    })
+
+print(f"FHIR conditions built: {len(fhir_condition_rows)}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Write clinical_conditions — FHIR
+
+# COMMAND ----------
+
+if fhir_condition_rows:
+    cond_fhir_df = spark.createDataFrame(fhir_condition_rows, schema=CLINICAL_CONDITIONS_SCHEMA)
+    cond_fhir_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_CONDITIONS)
+    print(f"Wrote {len(fhir_condition_rows)} FHIR condition row(s) to {TBL_CLINICAL_CONDITIONS}")
+else:
+    print("No FHIR Condition resources — clinical_conditions (FHIR) not written")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Pass 5 — HL7 ADT → clinical_encounters + clinical_conditions
+# MAGIC
+# MAGIC ADT^A01 (admission) → encounter status = in-progress
+# MAGIC ADT^A03 (discharge) → encounter status = finished
+# MAGIC DG1 segment (present in A01 only) → condition row with ICD-10 principal diagnosis.
+
+# COMMAND ----------
+
+hl7_adt_rows = spark.sql(f"""
+    SELECT message_id, raw_payload, message_event, source_facility
+    FROM {BRONZE_HL7_TABLE}
+    WHERE message_type = 'ADT'
+      AND message_event IN ('A01', 'A03')
+      AND validation_status != 'ERROR'
+""").collect()
+
+_class_map = {"I": "IMP", "O": "AMB", "E": "EMER", "R": "AMB"}
+
+hl7_encounter_rows  = []
+hl7_condition_rows  = []
+
+for row in hl7_adt_rows:
+    now_ts_hl7    = datetime.now(timezone.utc).replace(tzinfo=None)
+    raw           = row["raw_payload"]
+    event_code    = row["message_event"]      # A01 or A03
+    source_rec_id = row["message_id"]
+
+    segs = _parse_hl7_segments(raw)
+
+    # PID: patient demographics for MPI resolution
+    pid       = (segs.get("PID") or [[]])[0]
+    mrn_raw   = pid[3] if len(pid) > 3 else ""      # PID-3: MRN^^^facility^MR
+    pid_parts = mrn_raw.split("^")
+    mrn        = pid_parts[0] if pid_parts else None
+    facility_from_pid = pid_parts[3] if len(pid_parts) > 3 else None
+
+    name_raw  = pid[5] if len(pid) > 5 else ""      # PID-5: family^given^middle
+    name_parts = name_raw.split("^")
+    last_name  = name_parts[0] if name_parts else None
+    first_name = name_parts[1] if len(name_parts) > 1 else None
+
+    dob_raw    = pid[7] if len(pid) > 7 else None   # PID-7: YYYYMMDD
+    gender     = pid[8] if len(pid) > 8 else None   # PID-8: M | F | U
+
+    dob_date   = _parse_hl7_date(dob_raw)
+
+    facility_npi = row["source_facility"] or facility_from_pid
+
+    identity = PatientIdentity(
+        source_id=source_rec_id,
+        source_table=BRONZE_HL7_TABLE,
+        tenant_id=TENANT_ID,
+        family_name=last_name or None,
+        given_name=first_name or None,
+        birth_date=dob_date,
+        gender=gender or None,
+        postal_code=None,
+        ssn_last4=None,
+        source_mrn=mrn or None,
+        source_facility_npi=facility_npi or None,
+        source_identifier_system="urn:hl7:adt",
+    )
+    result = mpi.resolve(identity)
+    umpi   = result.umpi
+
+    # EVN-2: event date/time (admission or discharge)
+    evn      = (segs.get("EVN") or [[]])[0]
+    event_dt = _parse_hl7_datetime(evn[2] if len(evn) > 2 else None)
+
+    # PV1: encounter metadata
+    pv1            = (segs.get("PV1") or [[]])[0]
+    patient_class  = pv1[2] if len(pv1) > 2 else None   # PV1-2: I | O | E
+    loc_raw        = pv1[3] if len(pv1) > 3 else ""     # PV1-3: ward^room^bed^facility
+    loc_parts      = loc_raw.split("^")
+    enc_facility   = loc_parts[3] if len(loc_parts) > 3 else (facility_npi or None)
+
+    att_raw   = pv1[7] if len(pv1) > 7 else ""           # PV1-7: NPI-xxx^name...
+    att_parts = att_raw.split("^")
+    att_npi   = att_parts[0].replace("NPI-", "") if att_parts and att_parts[0] else None
+
+    enc_class = _class_map.get(patient_class) if patient_class else None
+
+    if event_code == "A01":
+        status       = "in-progress"
+        admit_dt     = event_dt
+        discharge_dt = None
+        los_hours    = None
+    else:  # A03
+        status       = "finished"
+        admit_dt     = None
+        discharge_dt = event_dt
+        los_hours    = None
+
+    # DG1: principal ICD-10 diagnosis (present in A01; skip if absent)
+    dg1           = (segs.get("DG1") or [[]])[0]
+    principal_icd10 = None
+    icd10_disp    = None
+    if len(dg1) > 3:
+        dg1_parts     = dg1[3].split("^")          # DG1-3: code^display^ICD10
+        principal_icd10 = dg1_parts[0] if dg1_parts and dg1_parts[0] else None
+        icd10_disp    = dg1_parts[1] if len(dg1_parts) > 1 else None
+
+    encounter_id = str(uuid.uuid4())
+
+    hl7_encounter_rows.append({
+        "encounter_id":           encounter_id,
+        "umpi":                   umpi,
+        "encounter_class":        enc_class,
+        "encounter_type":         None,
+        "status":                 status,
+        "admit_datetime":         admit_dt,
+        "discharge_datetime":     discharge_dt,
+        "length_of_stay_hours":   los_hours,
+        "facility_id":            enc_facility,
+        "attending_provider_npi": att_npi or None,
+        "principal_icd10":        principal_icd10,
+        "tenant_id":              TENANT_ID,
+        "source_system":          "HL7_V2",
+        "source_record_id":       source_rec_id,
+        "created_at":             now_ts_hl7,
+        "updated_at":             None,
+    })
+
+    if principal_icd10:
+        clin_status = "active" if event_code == "A01" else "resolved"
+        hl7_condition_rows.append({
+            "condition_id":         str(uuid.uuid4()),
+            "umpi":                 umpi,
+            "encounter_id":         encounter_id,
+            "icd10_code":           principal_icd10,
+            "icd10_display":        icd10_disp,
+            "condition_category":   "primary",
+            "onset_datetime":       admit_dt,
+            "abatement_datetime":   None,
+            "clinical_status":      clin_status,
+            "verification_status":  "confirmed",
+            "tenant_id":            TENANT_ID,
+            "source_system":        "HL7_V2",
+            "source_code":          principal_icd10,
+            "source_record_id":     source_rec_id,
+            "created_at":           now_ts_hl7,
+            "updated_at":           None,
+        })
+
+print(f"HL7 ADT messages processed : {len(hl7_adt_rows)}")
+print(f"HL7 encounters built       : {len(hl7_encounter_rows)}")
+print(f"HL7 conditions built (DG1) : {len(hl7_condition_rows)}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Write clinical_encounters — HL7
+
+# COMMAND ----------
+
+if hl7_encounter_rows:
+    enc_hl7_df = spark.createDataFrame(hl7_encounter_rows, schema=CLINICAL_ENCOUNTERS_SCHEMA)
+    enc_hl7_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_ENCOUNTERS)
+    print(f"Wrote {len(hl7_encounter_rows)} HL7 encounter row(s) to {TBL_CLINICAL_ENCOUNTERS}")
+else:
+    print("No HL7 ADT messages — clinical_encounters (HL7) not written")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Write clinical_conditions — HL7
+
+# COMMAND ----------
+
+if hl7_condition_rows:
+    cond_hl7_df = spark.createDataFrame(hl7_condition_rows, schema=CLINICAL_CONDITIONS_SCHEMA)
+    cond_hl7_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_CONDITIONS)
+    print(f"Wrote {len(hl7_condition_rows)} HL7 condition row(s) to {TBL_CLINICAL_CONDITIONS}")
+else:
+    print("No HL7 DG1 diagnoses — clinical_conditions (HL7) not written")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## CSV Ingestion Path — eClinicalWorks Patients and Labs
 # MAGIC
 # MAGIC DQ issues detected and logged to `audit_validation_errors`:
@@ -913,12 +1363,13 @@ ECW_IDENTIFIER_SYSTEM = "urn:system:eclinicalworks"
 
 # COMMAND ----------
 
-csv_mpi_rows      = []    # → mpi_patient_index (new UMPIs only)
-csv_xwalk_rows    = []    # → mpi_identity_crosswalk
-csv_patient_rows  = []    # → clinical_patients
-csv_validation_errs = []  # → audit_validation_errors
-ecw_patient_umpi_map = {} # ECW patient_id → umpi (for lab linkage)
-seen_patient_ids  = {}    # duplicate detection
+csv_mpi_rows        = []    # → mpi_patient_index (new UMPIs only)
+csv_xwalk_rows      = []    # → mpi_identity_crosswalk
+csv_patient_rows    = []    # → clinical_patients
+csv_condition_rows  = []    # → clinical_conditions (primary_dx_icd10 per patient)
+csv_validation_errs = []    # → audit_validation_errors
+ecw_patient_umpi_map = {}   # ECW patient_id → umpi (for lab linkage)
+seen_patient_ids    = {}    # duplicate detection
 
 csv_patients_started = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -1023,6 +1474,27 @@ with open(ECW_PATIENTS_FILE, newline="", encoding="utf-8") as fh:
                 ECW_PATIENTS_FILE, patient_id, primary_dx, pipeline_run_id,
             ))
 
+        # clinical_conditions: primary diagnosis — written as-is regardless of SNOMED mapping
+        if primary_dx:
+            csv_condition_rows.append({
+                "condition_id":         str(uuid.uuid4()),
+                "umpi":                 result.umpi,
+                "encounter_id":         None,
+                "icd10_code":           primary_dx,
+                "icd10_display":        None,
+                "condition_category":   "primary",
+                "onset_datetime":       None,
+                "abatement_datetime":   None,
+                "clinical_status":      "active",
+                "verification_status":  "confirmed",
+                "tenant_id":            TENANT_ID,
+                "source_system":        "eClinicalWorks",
+                "source_code":          primary_dx,
+                "source_record_id":     patient_id,
+                "created_at":           now_ts_csv,
+                "updated_at":           None,
+            })
+
         # clinical_patients: DDL-aligned (21 columns)
         csv_patient_rows.append({
             "patient_id":         str(uuid.uuid4()),
@@ -1076,6 +1548,11 @@ if csv_xwalk_rows:
     xwalk_csv_df = spark.createDataFrame(csv_xwalk_rows, schema=MPI_IDENTITY_CROSSWALK_SCHEMA)
     xwalk_csv_df.write.format("delta").mode("append").insertInto(TBL_MPI_XWALK)
     print(f"Wrote {len(csv_xwalk_rows)} crosswalk row(s) to {TBL_MPI_XWALK}")
+
+if csv_condition_rows:
+    cond_csv_df = spark.createDataFrame(csv_condition_rows, schema=CLINICAL_CONDITIONS_SCHEMA)
+    cond_csv_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_CONDITIONS)
+    print(f"Wrote {len(csv_condition_rows)} ECW condition row(s) to {TBL_CLINICAL_CONDITIONS}")
 
 # COMMAND ----------
 
@@ -1244,6 +1721,19 @@ csv_audit_entries = [
         "log_id":           str(uuid.uuid4()),
         "pipeline_run_id":  pipeline_run_id,
         "ingestion_path":   "csv",
+        "source_table":     TBL_CLINICAL_CONDITIONS,
+        "record_count":     len(csv_condition_rows),
+        "pass_count":       len(csv_condition_rows),
+        "error_count":      0,
+        "tenant_id":        TENANT_ID,
+        "run_started_at":   csv_patients_started,
+        "run_completed_at": csv_patients_completed,
+        "logged_at":        datetime.now(timezone.utc).replace(tzinfo=None),
+    },
+    {
+        "log_id":           str(uuid.uuid4()),
+        "pipeline_run_id":  pipeline_run_id,
+        "ingestion_path":   "csv",
         "source_table":     TBL_CLINICAL_OBS,
         "record_count":     len(csv_obs_rows) + len(csv_unmapped_rows),
         "pass_count":       len(csv_obs_rows),
@@ -1266,11 +1756,13 @@ print(f"CSV audit entries written to {BRONZE_AUDIT_TABLE}")
 
 # COMMAND ----------
 
-total_mpi    = len(fhir_mpi_rows) + len(csv_mpi_rows)
-total_xwalk  = len(fhir_xwalk_rows) + len(csv_xwalk_rows)
-total_patients = len(fhir_patient_rows) + len(csv_patient_rows)
-total_obs    = len(fhir_obs_rows) + len(csv_obs_rows)
-total_unmapped = len(fhir_unmapped_rows) + len(csv_unmapped_rows)
+total_mpi        = len(fhir_mpi_rows) + len(csv_mpi_rows)
+total_xwalk      = len(fhir_xwalk_rows) + len(csv_xwalk_rows)
+total_patients   = len(fhir_patient_rows) + len(csv_patient_rows)
+total_encounters = len(fhir_encounter_rows) + len(hl7_encounter_rows)
+total_conditions = len(fhir_condition_rows) + len(hl7_condition_rows) + len(csv_condition_rows)
+total_obs        = len(fhir_obs_rows) + len(csv_obs_rows)
+total_unmapped   = len(fhir_unmapped_rows) + len(csv_unmapped_rows)
 
 print("=" * 60)
 print(f"Bronze → Silver complete  |  pipeline_run_id: {pipeline_run_id}")
@@ -1278,6 +1770,10 @@ print("=" * 60)
 print(f"  mpi_patient_index       : {total_mpi} new UMPI(s)")
 print(f"  mpi_identity_crosswalk  : {total_xwalk} source link(s)")
 print(f"  clinical_patients       : {total_patients} row(s)")
+print(f"  clinical_encounters     : {total_encounters} row(s)  "
+      f"(FHIR={len(fhir_encounter_rows)}  HL7={len(hl7_encounter_rows)})")
+print(f"  clinical_conditions     : {total_conditions} row(s)  "
+      f"(FHIR={len(fhir_condition_rows)}  HL7={len(hl7_condition_rows)}  CSV={len(csv_condition_rows)})")
 print(f"  clinical_observations   : {total_obs} row(s) (mapped only)")
 print(f"  terminology_unmapped    : {total_unmapped} code(s)")
 print(f"  validation_errors       : {len(csv_validation_errs)} CSV DQ issue(s)")
