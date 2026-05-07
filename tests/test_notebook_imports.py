@@ -76,3 +76,15 @@ class TestNotebookImports:
         assert hasattr(mod, "TERMINOLOGY_UNMAPPED_CODES_SCHEMA")
         assert hasattr(mod, "AUDIT_VALIDATION_ERRORS_SCHEMA")
         assert hasattr(mod, "AUDIT_INGEST_LOG_SCHEMA")
+
+    def test_nb07_silver_to_gold_csv_loads(self):
+        from pyspark.sql.types import StructType
+        mod = _load("07_silver_to_gold_csv.py")
+        schema_attrs = [
+            name for name, val in vars(mod).items()
+            if isinstance(val, StructType)
+        ]
+        assert schema_attrs == [], (
+            f"07_silver_to_gold_csv.py must not define StructType schema constants "
+            f"(orchestration wrapper only); found: {schema_attrs}"
+        )
