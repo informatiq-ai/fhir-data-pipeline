@@ -228,6 +228,7 @@ def _detect_fhir_validation_issues(bundle_dict, source_bundle_id, run_id):
 SOURCE_FILES = [
     f"{REPO_ROOT}/data/synthetic/fhir_bundle_sample.json",
     f"{REPO_ROOT}/data/synthetic/fhir_bundle_batch.json",
+    f"{REPO_ROOT}/data/synthetic/fhir_bundle_charlson.json",
 ]
 
 for path in SOURCE_FILES:
