@@ -50,6 +50,9 @@ class TestNotebookImports:
         assert hasattr(mod, "MPI_PATIENT_INDEX_SCHEMA")
         assert hasattr(mod, "CLINICAL_PATIENTS_SCHEMA")
         assert hasattr(mod, "CLINICAL_OBSERVATIONS_SCHEMA")
+        assert not hasattr(mod, "ECW_PATIENTS_FILE"), "ECW_PATIENTS_FILE must not exist in nb03 (moved to nb06)"
+        assert not hasattr(mod, "ECW_LABS_FILE"), "ECW_LABS_FILE must not exist in nb03 (moved to nb06)"
+        assert not hasattr(mod, "ECW_IDENTIFIER_SYSTEM"), "ECW_IDENTIFIER_SYSTEM must not exist in nb03 (moved to nb06)"
 
     def test_nb04_silver_to_gold_loads(self):
         mod = _load("04_silver_to_gold.py")
