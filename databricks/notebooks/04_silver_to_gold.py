@@ -568,94 +568,97 @@ for m in measure_rows:
 # COMMAND ----------
 
 from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType, BooleanType,
-    LongType, TimestampType, DateType, DoubleType, MapType, ArrayType
+    ArrayType, BooleanType, DateType, DoubleType, IntegerType,
+    LongType, MapType, StringType, StructField, StructType, TimestampType,
 )
 
+# Module-level constants — consumed by tests/test_contracts.py for DDL alignment checks.
+# Names match databricks/fhir_pipeline_ddl.sql table names.  Do not rename.
+
 # ── analytics_patient_summary (11 cols — DDL order) ───────────────────────────
-summary_schema = StructType([
+ANALYTICS_PATIENT_SUMMARY_SCHEMA = StructType([
     StructField("patient_key",             StringType(),                         False),
-    StructField("charlson_index",           IntegerType(),                        True),
-    StructField("elixhauser_index",         IntegerType(),                        True),
-    StructField("chronic_condition_flags",  MapType(StringType(), BooleanType()), True),
-    StructField("pcp_npi",                  StringType(),                         True),
-    StructField("pcp_attribution_method",   StringType(),                         True),
-    StructField("last_encounter_date",      DateType(),                           True),
-    StructField("total_encounter_count",    LongType(),                           True),
-    StructField("tenant_id",               StringType(),                         False),
-    StructField("pipeline_run_id",         StringType(),                         True),
-    StructField("generated_at",            TimestampType(),                      False),
+    StructField("charlson_index",          IntegerType(),                        True),
+    StructField("elixhauser_index",        IntegerType(),                        True),
+    StructField("chronic_condition_flags", MapType(StringType(), BooleanType()), True),
+    StructField("pcp_npi",                 StringType(),                         True),
+    StructField("pcp_attribution_method",  StringType(),                         True),
+    StructField("last_encounter_date",     DateType(),                           True),
+    StructField("total_encounter_count",   LongType(),                           True),
+    StructField("tenant_id",              StringType(),                         False),
+    StructField("pipeline_run_id",        StringType(),                         True),
+    StructField("generated_at",           TimestampType(),                      False),
+])
+
+# ── analytics_quality_measures (13 cols — DDL order) ─────────────────────────
+ANALYTICS_QUALITY_MEASURES_SCHEMA = StructType([
+    StructField("measure_id",               StringType(),    False),
+    StructField("patient_key",             StringType(),    False),
+    StructField("measure_name",            StringType(),    False),
+    StructField("measure_code",            StringType(),    True),
+    StructField("in_denominator",          BooleanType(),   True),
+    StructField("in_numerator",            BooleanType(),   True),
+    StructField("excluded",                BooleanType(),   True),
+    StructField("hba1c_value",             DoubleType(),    True),
+    StructField("measurement_period_start",DateType(),      True),
+    StructField("measurement_period_end",  DateType(),      True),
+    StructField("tenant_id",              StringType(),    False),
+    StructField("pipeline_run_id",        StringType(),    True),
+    StructField("generated_at",           TimestampType(), False),
+])
+
+# ── analytics_adt_events (12 cols — DDL order) ────────────────────────────────
+ANALYTICS_ADT_EVENTS_SCHEMA = StructType([
+    StructField("event_id",                   StringType(),    False),
+    StructField("patient_key",               StringType(),    False),
+    StructField("event_type",                StringType(),    True),
+    StructField("event_subtype",             StringType(),    True),
+    StructField("facility_id",               StringType(),    True),
+    StructField("event_datetime",            TimestampType(), False),
+    StructField("readmission_30day",         BooleanType(),   True),
+    StructField("prior_discharge_datetime",  TimestampType(), True),
+    StructField("days_since_prior_discharge",DoubleType(),    True),
+    StructField("tenant_id",                StringType(),    False),
+    StructField("pipeline_run_id",          StringType(),    True),
+    StructField("generated_at",             TimestampType(), False),
+])
+
+# ── export_uscdi_v3_patient (9 cols — DDL order) ──────────────────────────────
+EXPORT_USCDI_V3_PATIENT_SCHEMA = StructType([
+    StructField("export_id",        StringType(),            False),
+    StructField("patient_key",      StringType(),            False),
+    StructField("uscdi_version",    StringType(),            True),
+    StructField("export_payload",   StringType(),            False),
+    StructField("export_datetime",  TimestampType(),         False),
+    StructField("qhin_ready",       BooleanType(),           True),
+    StructField("missing_elements", ArrayType(StringType()), True),
+    StructField("tenant_id",        StringType(),            False),
+    StructField("pipeline_run_id",  StringType(),            True),
 ])
 
 if summary_rows:
-    summary_df = spark.createDataFrame(summary_rows, schema=summary_schema)
+    summary_df = spark.createDataFrame(summary_rows, schema=ANALYTICS_PATIENT_SUMMARY_SCHEMA)
     summary_df.write.insertInto(TBL_GOLD_SUMMARY)
     print(f"Wrote {summary_df.count()} row(s) to {TBL_GOLD_SUMMARY}")
 else:
     print(f"No analytics_patient_summary rows to write")
 
-# ── analytics_quality_measures (13 cols — DDL order) ─────────────────────────
-measures_schema = StructType([
-    StructField("measure_id",               StringType(),   False),
-    StructField("patient_key",              StringType(),   False),
-    StructField("measure_name",             StringType(),   False),
-    StructField("measure_code",             StringType(),   True),
-    StructField("in_denominator",           BooleanType(),  True),
-    StructField("in_numerator",             BooleanType(),  True),
-    StructField("excluded",                 BooleanType(),  True),
-    StructField("hba1c_value",              DoubleType(),   True),
-    StructField("measurement_period_start", DateType(),     True),
-    StructField("measurement_period_end",   DateType(),     True),
-    StructField("tenant_id",               StringType(),   False),
-    StructField("pipeline_run_id",         StringType(),   True),
-    StructField("generated_at",            TimestampType(), False),
-])
-
 if measure_rows:
-    measures_df = spark.createDataFrame(measure_rows, schema=measures_schema)
+    measures_df = spark.createDataFrame(measure_rows, schema=ANALYTICS_QUALITY_MEASURES_SCHEMA)
     measures_df.write.insertInto(TBL_GOLD_MEASURES)
     print(f"Wrote {measures_df.count()} row(s) to {TBL_GOLD_MEASURES}")
 else:
     print(f"No analytics_quality_measures rows to write")
 
-# ── analytics_adt_events (12 cols — DDL order) ────────────────────────────────
-adt_schema = StructType([
-    StructField("event_id",                   StringType(),    False),
-    StructField("patient_key",                StringType(),    False),
-    StructField("event_type",                 StringType(),    True),
-    StructField("event_subtype",              StringType(),    True),
-    StructField("facility_id",                StringType(),    True),
-    StructField("event_datetime",             TimestampType(), False),
-    StructField("readmission_30day",          BooleanType(),   True),
-    StructField("prior_discharge_datetime",   TimestampType(), True),
-    StructField("days_since_prior_discharge", DoubleType(),    True),
-    StructField("tenant_id",                 StringType(),    False),
-    StructField("pipeline_run_id",           StringType(),    True),
-    StructField("generated_at",              TimestampType(), False),
-])
-
 if adt_rows:
-    adt_df = spark.createDataFrame(adt_rows, schema=adt_schema)
+    adt_df = spark.createDataFrame(adt_rows, schema=ANALYTICS_ADT_EVENTS_SCHEMA)
     adt_df.write.insertInto(TBL_GOLD_ADT)
     print(f"Wrote {adt_df.count()} row(s) to {TBL_GOLD_ADT}")
 else:
     print(f"No analytics_adt_events rows to write")
 
-# ── export_uscdi_v3_patient (9 cols — DDL order) ──────────────────────────────
-uscdi_schema = StructType([
-    StructField("export_id",        StringType(),             False),
-    StructField("patient_key",      StringType(),             False),
-    StructField("uscdi_version",    StringType(),             True),
-    StructField("export_payload",   StringType(),             False),
-    StructField("export_datetime",  TimestampType(),          False),
-    StructField("qhin_ready",       BooleanType(),            True),
-    StructField("missing_elements", ArrayType(StringType()),  True),
-    StructField("tenant_id",        StringType(),             False),
-    StructField("pipeline_run_id",  StringType(),             True),
-])
-
 if uscdi_rows:
-    uscdi_df = spark.createDataFrame(uscdi_rows, schema=uscdi_schema)
+    uscdi_df = spark.createDataFrame(uscdi_rows, schema=EXPORT_USCDI_V3_PATIENT_SCHEMA)
     uscdi_df.write.insertInto(TBL_GOLD_USCDI)
     print(f"Wrote {uscdi_df.count()} row(s) to {TBL_GOLD_USCDI}")
 else:
