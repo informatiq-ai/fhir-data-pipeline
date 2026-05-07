@@ -317,6 +317,56 @@ for path in SOURCE_FILES:
 
 # COMMAND ----------
 
+from pyspark.sql.types import (
+    BooleanType, LongType, StringType, StructField, StructType, TimestampType,
+)
+
+# Module-level constants — consumed by tests/test_contracts.py for DDL alignment checks.
+# Names match databricks/fhir_pipeline_ddl.sql table names.  Do not rename.
+
+INGEST_HL7_MESSAGES_SCHEMA = StructType([
+    StructField("message_id",        StringType(),    False),  # NOT NULL
+    StructField("raw_payload",       StringType(),    False),  # NOT NULL
+    StructField("message_type",      StringType(),    True),
+    StructField("message_event",     StringType(),    True),
+    StructField("tenant_id",         StringType(),    False),  # NOT NULL
+    StructField("source_system",     StringType(),    True),
+    StructField("source_facility",   StringType(),    True),
+    StructField("received_at",       TimestampType(), False),  # NOT NULL
+    StructField("validation_status", StringType(),    True),
+    StructField("pipeline_run_id",   StringType(),    True),
+])
+
+AUDIT_VALIDATION_ERRORS_SCHEMA = StructType([
+    StructField("error_id",         StringType(),    False),  # NOT NULL
+    StructField("pipeline_run_id",  StringType(),    True),
+    StructField("ingestion_path",   StringType(),    True),
+    StructField("source_record_id", StringType(),    True),
+    StructField("error_code",       StringType(),    True),
+    StructField("error_message",    StringType(),    True),
+    StructField("raw_payload",      StringType(),    True),
+    StructField("tenant_id",        StringType(),    True),
+    StructField("requires_review",  BooleanType(),   True),
+    StructField("reviewed_at",      TimestampType(), True),
+    StructField("reviewed_by",      StringType(),    True),
+    StructField("review_outcome",   StringType(),    True),
+    StructField("created_at",       TimestampType(), False),  # NOT NULL
+])
+
+AUDIT_INGEST_LOG_SCHEMA = StructType([
+    StructField("log_id",           StringType(),    False),  # NOT NULL
+    StructField("pipeline_run_id",  StringType(),    False),  # NOT NULL
+    StructField("ingestion_path",   StringType(),    True),
+    StructField("source_table",     StringType(),    True),
+    StructField("record_count",     LongType(),      True),
+    StructField("pass_count",       LongType(),      True),
+    StructField("error_count",      LongType(),      True),
+    StructField("tenant_id",        StringType(),    True),
+    StructField("run_started_at",   TimestampType(), True),
+    StructField("run_completed_at", TimestampType(), True),
+    StructField("logged_at",        TimestampType(), False),  # NOT NULL
+])
+
 all_rows             = []   # rows for ingest_hl7_messages
 all_validation_errs  = []   # rows for audit_validation_errors
 audit_entries        = []   # rows for audit_ingest_log (one per file)
@@ -418,22 +468,7 @@ print(f"\nTotal: {total_attempted:,} messages → {total_rows:,} Bronze rows, "
 
 # COMMAND ----------
 
-from pyspark.sql.types import StructType, StructField, StringType, TimestampType
-
-hl7_schema = StructType([
-    StructField("message_id",        StringType(),    False),  # NOT NULL
-    StructField("raw_payload",       StringType(),    False),  # NOT NULL
-    StructField("message_type",      StringType(),    True),
-    StructField("message_event",     StringType(),    True),
-    StructField("tenant_id",         StringType(),    False),  # NOT NULL
-    StructField("source_system",     StringType(),    True),
-    StructField("source_facility",   StringType(),    True),
-    StructField("received_at",       TimestampType(), False),  # NOT NULL
-    StructField("validation_status", StringType(),    True),
-    StructField("pipeline_run_id",   StringType(),    True),
-])
-
-df = spark.createDataFrame(all_rows, schema=hl7_schema)
+df = spark.createDataFrame(all_rows, schema=INGEST_HL7_MESSAGES_SCHEMA)
 
 df.write \
     .format("delta") \
@@ -449,26 +484,8 @@ print(f"Wrote {df.count():,} row(s) to {TARGET_TABLE}")
 
 # COMMAND ----------
 
-from pyspark.sql.types import BooleanType
-
-validation_schema = StructType([
-    StructField("error_id",         StringType(),    False),  # NOT NULL
-    StructField("pipeline_run_id",  StringType(),    True),
-    StructField("ingestion_path",   StringType(),    True),
-    StructField("source_record_id", StringType(),    True),
-    StructField("error_code",       StringType(),    True),
-    StructField("error_message",    StringType(),    True),
-    StructField("raw_payload",      StringType(),    True),
-    StructField("tenant_id",        StringType(),    True),
-    StructField("requires_review",  BooleanType(),   True),
-    StructField("reviewed_at",      TimestampType(), True),
-    StructField("reviewed_by",      StringType(),    True),
-    StructField("review_outcome",   StringType(),    True),
-    StructField("created_at",       TimestampType(), False),  # NOT NULL
-])
-
 if all_validation_errs:
-    val_df = spark.createDataFrame(all_validation_errs, schema=validation_schema)
+    val_df = spark.createDataFrame(all_validation_errs, schema=AUDIT_VALIDATION_ERRORS_SCHEMA)
     val_df.write \
         .format("delta") \
         .mode("append") \
@@ -484,23 +501,7 @@ else:
 
 # COMMAND ----------
 
-from pyspark.sql.types import LongType
-
-audit_schema = StructType([
-    StructField("log_id",           StringType(),    False),  # NOT NULL
-    StructField("pipeline_run_id",  StringType(),    False),  # NOT NULL
-    StructField("ingestion_path",   StringType(),    True),
-    StructField("source_table",     StringType(),    True),
-    StructField("record_count",     LongType(),      True),
-    StructField("pass_count",       LongType(),      True),
-    StructField("error_count",      LongType(),      True),
-    StructField("tenant_id",        StringType(),    True),
-    StructField("run_started_at",   TimestampType(), True),
-    StructField("run_completed_at", TimestampType(), True),
-    StructField("logged_at",        TimestampType(), False),  # NOT NULL
-])
-
-audit_df = spark.createDataFrame(audit_entries, schema=audit_schema)
+audit_df = spark.createDataFrame(audit_entries, schema=AUDIT_INGEST_LOG_SCHEMA)
 
 audit_df.write \
     .format("delta") \
