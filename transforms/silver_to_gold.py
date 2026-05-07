@@ -449,7 +449,12 @@ def build_patient_summary(
         attributed_pcp_name=attributed_pcp_name,
         attribution_method=attribution_method,
         charlson_index=charlson,
-        elixhauser_index=0,        # Elixhauser implementation is an extension point
+        # FUTURE: Elixhauser Index (van Walraven weighted variant)
+        # 31-condition AHRQ ICD-10 groupings with van Walraven weights.
+        # Scaffolded in analytics_patient_summary Gold table (elixhauser_index INT).
+        # Implement in a dedicated transforms/elixhauser.py and import here.
+        # Reference: van Walraven et al. (2009), Medical Care 47(6):626-633.
+        elixhauser_index=0,
         risk_tier=risk_tier,
         risk_score_updated_ts=now.isoformat(),
         total_encounters_12m=total_encounters_12m,
