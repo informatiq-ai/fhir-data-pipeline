@@ -56,3 +56,9 @@ class TestNotebookImports:
         assert hasattr(mod, "ANALYTICS_PATIENT_SUMMARY_SCHEMA")
         assert hasattr(mod, "ANALYTICS_ADT_EVENTS_SCHEMA")
         assert hasattr(mod, "EXPORT_USCDI_V3_PATIENT_SCHEMA")
+
+    def test_nb05_ingest_csv_loads(self):
+        mod = _load("05_ingest_csv.py")
+        assert hasattr(mod, "CSV_BATCHES_SCHEMA")
+        assert hasattr(mod, "VALIDATION_SCHEMA")
+        assert hasattr(mod, "AUDIT_INGEST_LOG_SCHEMA")

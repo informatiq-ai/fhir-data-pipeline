@@ -89,7 +89,6 @@ ECW_LABS_FILE     = f"{REPO_ROOT}/data/synthetic/ecw_labs.csv"
 # COMMAND ----------
 
 from pyspark.sql.types import (
-    BigIntType,
     BooleanType,
     LongType,
     StringType,
