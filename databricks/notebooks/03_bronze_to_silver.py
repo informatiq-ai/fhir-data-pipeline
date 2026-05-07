@@ -5,23 +5,24 @@
 # MAGIC %md
 # MAGIC # 03 — Bronze → Silver Normalization
 # MAGIC
-# MAGIC **Purpose:** Read FHIR R4 Bundles from Bronze, split into resources, run identity
+# MAGIC **Purpose:** Read FHIR R4 Bundles and HL7 v2 messages from Bronze, run identity
 # MAGIC resolution and terminology normalization, and write normalized records to Silver CDM
-# MAGIC tables. Also processes eClinicalWorks CSV flat files via the CSV ingestion path.
-# MAGIC All MPI matching logic is delegated entirely to `transforms/identity_resolution.py`.
+# MAGIC tables. All MPI matching logic is delegated entirely to `transforms/identity_resolution.py`.
+# MAGIC
+# MAGIC Processes FHIR R4 and HL7 v2 paths only. CSV batch path is handled by
+# MAGIC `06_bronze_to_silver_csv.py` (Job 2).
 # MAGIC
 # MAGIC **Processing order (enforced):**
 # MAGIC 1. Seed in-memory MPIIndex from existing Silver records (idempotency)
 # MAGIC 2. FHIR Patient resources → `mpi_patient_index` + `mpi_identity_crosswalk` + `clinical_patients`
 # MAGIC 3. FHIR Observation resources → LOINC normalization → `clinical_observations` + `terminology_unmapped_codes`
-# MAGIC 4. ECW CSV patients → `mpi_patient_index` + `mpi_identity_crosswalk` + `clinical_patients`
-# MAGIC 5. ECW CSV labs → LOINC normalization → `clinical_observations` + `terminology_unmapped_codes`
+# MAGIC 4. HL7 ADT messages → `clinical_encounters` + `clinical_conditions`
 # MAGIC
 # MAGIC Unmapped codes land in `terminology_unmapped_codes` — nothing is dropped silently.
 # MAGIC `clinical_observations.loinc_code` is NOT NULL; unmapped observations are skipped
 # MAGIC from that table and captured in `terminology_unmapped_codes` for human review.
 # MAGIC
-# MAGIC **Reads from:** `dev.fhir_bronze.ingest_fhir_bundles`
+# MAGIC **Reads from:** `dev.fhir_bronze.ingest_fhir_bundles`, `dev.fhir_bronze.ingest_hl7_messages`
 # MAGIC
 # MAGIC **Writes to:**
 # MAGIC - `dev.fhir_silver.mpi_patient_index`
@@ -30,7 +31,6 @@
 # MAGIC - `dev.fhir_silver.clinical_observations`
 # MAGIC - `dev.fhir_silver.terminology_unmapped_codes`
 # MAGIC - `dev.fhir_bronze.audit_ingest_log`
-# MAGIC - `dev.fhir_bronze.audit_validation_errors`
 # MAGIC
 # MAGIC **Run order:** Notebook 03 of 04. Run after `01_ingest_hl7.py` and
 # MAGIC `02_ingest_fhir.py`, before `04_silver_to_gold.py`.
@@ -39,7 +39,6 @@
 
 import sys
 import os
-import csv
 import uuid
 import json
 import re as _re
@@ -359,14 +358,16 @@ print("Silver tables verified")
 
 # COMMAND ----------
 
-spark.sql(f"TRUNCATE TABLE {TBL_MPI_PATIENTS}")
-spark.sql(f"TRUNCATE TABLE {TBL_MPI_XWALK}")
-spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_PATIENTS}")
-spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_ENCOUNTERS}")
-spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_CONDITIONS}")
-spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_OBS}")
-
-print("Silver tables truncated (development mode)")
+if TGT_CATALOG == "dev":
+    spark.sql(f"TRUNCATE TABLE {TBL_MPI_PATIENTS}")
+    spark.sql(f"TRUNCATE TABLE {TBL_MPI_XWALK}")
+    spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_PATIENTS}")
+    spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_ENCOUNTERS}")
+    spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_CONDITIONS}")
+    spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_OBS}")
+    print("Silver tables truncated (dev mode only)")
+else:
+    print(f"Truncate skipped — catalog is '{TGT_CATALOG}' (dev-only operation)")
 
 # COMMAND ----------
 
@@ -564,23 +565,6 @@ def _parse_hl7_segments(raw_payload):
         segs.setdefault(seg_name, []).append(parts)
     return segs
 
-
-def _csv_validation_error(code, field, detail, source_file, row_id, raw_val, run_id):
-    return {
-        "error_id":         str(uuid.uuid4()),
-        "pipeline_run_id":  run_id,
-        "ingestion_path":   "csv",
-        "source_record_id": row_id,
-        "error_code":       code,
-        "error_message":    f"{field}: {detail}",
-        "raw_payload":      str(raw_val) if raw_val is not None else None,
-        "tenant_id":        TENANT_ID,
-        "requires_review":  True,
-        "reviewed_at":      None,
-        "reviewed_by":      None,
-        "review_outcome":   None,
-        "created_at":       datetime.now(timezone.utc).replace(tzinfo=None),
-    }
 
 # COMMAND ----------
 
@@ -1340,429 +1324,17 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## CSV Ingestion Path — eClinicalWorks Patients and Labs
-# MAGIC
-# MAGIC DQ issues detected and logged to `audit_validation_errors`:
-# MAGIC - `CSV_BLANK_NAME`         — first_name or last_name is empty
-# MAGIC - `CSV_MALFORMED_DOB`      — DOB not in YYYY-MM-DD format; date_of_birth → NULL
-# MAGIC - `CSV_DUPLICATE_ROW`      — same patient_id seen more than once
-# MAGIC - `CSV_INVALID_ICD10`      — primary_dx_icd10 produces no SNOMED mapping
-# MAGIC - `CSV_UNMAPPED_LAB_CODE`  — test_code has no LOINC mapping
-# MAGIC - `CSV_TEXT_RESULT_VALUE`  — result_value cannot be parsed as float
-
-# COMMAND ----------
-
-ECW_PATIENTS_FILE     = f"{REPO_ROOT}/data/synthetic/ecw_patients.csv"
-ECW_LABS_FILE         = f"{REPO_ROOT}/data/synthetic/ecw_labs.csv"
-ECW_IDENTIFIER_SYSTEM = "urn:system:eclinicalworks"
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Step CSV-1 — Process ecw_patients.csv
-
-# COMMAND ----------
-
-csv_mpi_rows        = []    # → mpi_patient_index (new UMPIs only)
-csv_xwalk_rows      = []    # → mpi_identity_crosswalk
-csv_patient_rows    = []    # → clinical_patients
-csv_condition_rows  = []    # → clinical_conditions (primary_dx_icd10 per patient)
-csv_validation_errs = []    # → audit_validation_errors
-ecw_patient_umpi_map = {}   # ECW patient_id → umpi (for lab linkage)
-seen_patient_ids    = {}    # duplicate detection
-
-csv_patients_started = datetime.now(timezone.utc).replace(tzinfo=None)
-
-with open(ECW_PATIENTS_FILE, newline="", encoding="utf-8") as fh:
-    reader = csv.DictReader(fh)
-    for row_idx, row in enumerate(reader):
-        now_ts_csv = datetime.now(timezone.utc).replace(tzinfo=None)
-        patient_id = row["patient_id"].strip()
-        first_name = row["first_name"].strip()
-        last_name  = row["last_name"].strip()
-        raw_dob    = row["dob"].strip()
-        gender     = row["gender"].strip()
-        ssn_last4  = row["ssn_last4"].strip() or None
-        zip_code   = row["zip"].strip() or None
-        pcp_npi    = row["pcp_npi"].strip() or None
-        primary_dx = row["primary_dx_icd10"].strip() or None
-
-        dob_date, dob_malformed = _parse_iso_dob(raw_dob)
-
-        # DQ: blank name
-        if not first_name:
-            csv_validation_errs.append(_csv_validation_error(
-                "CSV_BLANK_NAME", "first_name",
-                "first_name is blank; MPI name-based passes may degrade",
-                ECW_PATIENTS_FILE, patient_id, first_name, pipeline_run_id,
-            ))
-        if not last_name:
-            csv_validation_errs.append(_csv_validation_error(
-                "CSV_BLANK_NAME", "last_name",
-                "last_name is blank; MPI name-based passes may degrade",
-                ECW_PATIENTS_FILE, patient_id, last_name, pipeline_run_id,
-            ))
-
-        # DQ: malformed DOB
-        if dob_malformed:
-            csv_validation_errs.append(_csv_validation_error(
-                "CSV_MALFORMED_DOB", "dob",
-                "DOB is not in ISO 8601 format (expected YYYY-MM-DD); date_of_birth set to NULL",
-                ECW_PATIENTS_FILE, patient_id, raw_dob, pipeline_run_id,
-            ))
-
-        # DQ: duplicate row
-        if patient_id in seen_patient_ids:
-            csv_validation_errs.append(_csv_validation_error(
-                "CSV_DUPLICATE_ROW", "patient_id",
-                f"Duplicate patient_id first seen at row {seen_patient_ids[patient_id]}; "
-                f"MPI will return same UMPI (DETERMINISTIC match)",
-                ECW_PATIENTS_FILE, patient_id, patient_id, pipeline_run_id,
-            ))
-        else:
-            seen_patient_ids[patient_id] = row_idx
-
-        # MPI resolution
-        identity = PatientIdentity(
-            source_id=patient_id,
-            source_table=ECW_PATIENTS_FILE,
-            tenant_id=TENANT_ID,
-            family_name=last_name or None,
-            given_name=first_name or None,
-            birth_date=dob_date,
-            gender=gender or None,
-            postal_code=zip_code,
-            ssn_last4=ssn_last4,
-            source_mrn=patient_id,
-            source_facility_npi=pcp_npi,
-            source_identifier_system=ECW_IDENTIFIER_SYSTEM,
-        )
-        result = mpi.resolve(identity)
-        ecw_patient_umpi_map[patient_id] = result.umpi
-
-        # mpi_patient_index: new patients only
-        if result.is_new_record:
-            csv_mpi_rows.append({
-                "umpi":                result.umpi,
-                "resolution_method":   result.match_method,
-                "first_resolved_at":   now_ts_csv,
-                "last_updated_at":     now_ts_csv,
-                "linked_record_count": 1,
-                "tenant_ids":          [TENANT_ID],
-                "is_merged":           False,
-                "merged_into_umpi":    None,
-            })
-
-        # mpi_identity_crosswalk: source_mrn NOT NULL — patient_id always present
-        csv_xwalk_rows.append({
-            "crosswalk_id":    str(uuid.uuid4()),
-            "umpi":            result.umpi,
-            "source_mrn":      patient_id,
-            "tenant_id":       TENANT_ID,
-            "source_system":   "eClinicalWorks",
-            "facility_id":     pcp_npi,
-            "match_confidence": result.match_confidence,
-            "created_at":      now_ts_csv,
-            "updated_at":      None,
-        })
-
-        # DQ: invalid ICD-10
-        if primary_dx and terminology.map_snomed_from_icd10(primary_dx) is None:
-            csv_validation_errs.append(_csv_validation_error(
-                "CSV_INVALID_ICD10", "primary_dx_icd10",
-                f"ICD-10 code '{primary_dx}' has no SNOMED mapping; written as-is",
-                ECW_PATIENTS_FILE, patient_id, primary_dx, pipeline_run_id,
-            ))
-
-        # clinical_conditions: primary diagnosis — written as-is regardless of SNOMED mapping
-        if primary_dx:
-            csv_condition_rows.append({
-                "condition_id":         str(uuid.uuid4()),
-                "umpi":                 result.umpi,
-                "encounter_id":         None,
-                "icd10_code":           primary_dx,
-                "icd10_display":        None,
-                "condition_category":   "primary",
-                "onset_datetime":       None,
-                "abatement_datetime":   None,
-                "clinical_status":      "active",
-                "verification_status":  "confirmed",
-                "tenant_id":            TENANT_ID,
-                "source_system":        "eClinicalWorks",
-                "source_code":          primary_dx,
-                "source_record_id":     patient_id,
-                "created_at":           now_ts_csv,
-                "updated_at":           None,
-            })
-
-        # clinical_patients: DDL-aligned (21 columns)
-        csv_patient_rows.append({
-            "patient_id":         str(uuid.uuid4()),
-            "umpi":               result.umpi,
-            "first_name":         first_name or None,
-            "last_name":          last_name or None,
-            "date_of_birth":      dob_date,
-            "gender":             gender or None,
-            "race":               None,
-            "ethnicity":          None,
-            "preferred_language": None,
-            "address_line1":      row["address"].strip() or None,
-            "address_line2":      None,
-            "city":               row["city"].strip() or None,
-            "state":              row["state"].strip() or None,
-            "zip":                zip_code,
-            "phone":              row["phone"].strip() or None,
-            "email":              None,
-            "tenant_id":          TENANT_ID,
-            "source_system":      "eClinicalWorks",
-            "source_record_id":   patient_id,
-            "created_at":         now_ts_csv,
-            "updated_at":         None,
-        })
-
-csv_patients_completed = datetime.now(timezone.utc).replace(tzinfo=None)
-
-print(f"ECW patients processed : {len(csv_patient_rows):,} rows")
-print(f"New UMPIs minted        : {len(csv_mpi_rows)}")
-print(f"Crosswalk entries       : {len(csv_xwalk_rows)}")
-print(f"Validation issues       : {len(csv_validation_errs)}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Step CSV-2 — Write ECW patient rows to Silver
-
-# COMMAND ----------
-
-if csv_patient_rows:
-    cp_csv_df = spark.createDataFrame(csv_patient_rows, schema=CLINICAL_PATIENTS_SCHEMA)
-    cp_csv_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_PATIENTS)
-    print(f"Wrote {cp_csv_df.count():,} ECW patient row(s) to {TBL_CLINICAL_PATIENTS}")
-
-if csv_mpi_rows:
-    mpi_csv_df = spark.createDataFrame(csv_mpi_rows, schema=MPI_PATIENT_INDEX_SCHEMA)
-    mpi_csv_df.write.format("delta").mode("append").insertInto(TBL_MPI_PATIENTS)
-    print(f"Wrote {len(csv_mpi_rows)} new UMPI(s) to {TBL_MPI_PATIENTS}")
-
-if csv_xwalk_rows:
-    xwalk_csv_df = spark.createDataFrame(csv_xwalk_rows, schema=MPI_IDENTITY_CROSSWALK_SCHEMA)
-    xwalk_csv_df.write.format("delta").mode("append").insertInto(TBL_MPI_XWALK)
-    print(f"Wrote {len(csv_xwalk_rows)} crosswalk row(s) to {TBL_MPI_XWALK}")
-
-if csv_condition_rows:
-    cond_csv_df = spark.createDataFrame(csv_condition_rows, schema=CLINICAL_CONDITIONS_SCHEMA)
-    cond_csv_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_CONDITIONS)
-    print(f"Wrote {len(csv_condition_rows)} ECW condition row(s) to {TBL_CLINICAL_CONDITIONS}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Step CSV-3 — Process ecw_labs.csv
-
-# COMMAND ----------
-
-csv_obs_rows     = []   # → clinical_observations (mapped only)
-csv_unmapped_rows = []  # → terminology_unmapped_codes
-csv_lab_val_errs  = []  # collected here, appended to csv_validation_errs below
-
-csv_labs_started = datetime.now(timezone.utc).replace(tzinfo=None)
-
-with open(ECW_LABS_FILE, newline="", encoding="utf-8") as fh:
-    reader = csv.DictReader(fh)
-    for row in reader:
-        now_ts_lab  = datetime.now(timezone.utc).replace(tzinfo=None)
-        result_id   = row["result_id"].strip()
-        ecw_pat_id  = row["patient_id"].strip()
-        test_code   = row["test_code"].strip()
-        test_name   = row["test_name"].strip()
-        raw_value   = row["result_value"].strip()
-        result_unit = row["result_unit"].strip() or None
-        ref_low     = row["reference_range_low"].strip() or None
-        ref_high    = row["reference_range_high"].strip() or None
-        abnormal    = row["abnormal_flag"].strip() or None
-        collect_date = row["collection_date"].strip() or None
-        prov_npi    = row["ordering_provider_npi"].strip() or None
-        status      = row["status"].strip() or None
-
-        umpi = ecw_patient_umpi_map.get(ecw_pat_id, "UNKNOWN")
-
-        # LOINC normalization: try test_code, fallback to test_name
-        loinc_result = terminology.map_loinc(test_code)
-        map_method   = "SOURCE_LOINC"
-        if loinc_result is None:
-            loinc_result = terminology.map_loinc(test_name)
-            map_method   = "TERMINOLOGY_SERVICE" if loinc_result else "UNMAPPED"
-
-        loinc_code    = loinc_result[0] if loinc_result else None
-        loinc_display = loinc_result[1] if loinc_result else None
-
-        # Parse numeric result value
-        value_quantity = None
-        is_text_value  = False
-        try:
-            value_quantity = float(raw_value)
-        except (ValueError, TypeError):
-            is_text_value = True
-
-        if is_text_value and raw_value:
-            csv_lab_val_errs.append(_csv_validation_error(
-                "CSV_TEXT_RESULT_VALUE", "result_value",
-                f"result_value '{raw_value}' cannot be parsed as float; value_quantity=NULL",
-                ECW_LABS_FILE, result_id, raw_value, pipeline_run_id,
-            ))
-
-        # observation_datetime from collection_date (date → midnight timestamp)
-        obs_dt = None
-        if collect_date:
-            try:
-                obs_dt = datetime.combine(date.fromisoformat(collect_date), datetime.min.time())
-            except (ValueError, TypeError):
-                obs_dt = None
-
-        if loinc_code:
-            # Mapped — write to clinical_observations
-            csv_obs_rows.append({
-                "observation_id":        str(uuid.uuid4()),
-                "umpi":                  umpi,
-                "encounter_id":          None,
-                "loinc_code":            loinc_code,
-                "loinc_display":         loinc_display,
-                "value_quantity":        value_quantity,
-                "value_unit":            result_unit,
-                "value_string":          raw_value if is_text_value else None,
-                "value_codeable_code":   None,
-                "value_codeable_system": None,
-                "reference_range_low":   _to_float(ref_low),
-                "reference_range_high":  _to_float(ref_high),
-                "interpretation":        abnormal,
-                "observation_datetime":  obs_dt,
-                "status":                status,
-                "tenant_id":             TENANT_ID,
-                "source_system":         "eClinicalWorks",
-                "source_code":           test_code,
-                "source_record_id":      result_id,
-                "created_at":            now_ts_lab,
-                "updated_at":            None,
-            })
-        else:
-            # Unmapped — skip clinical_observations
-            csv_lab_val_errs.append(_csv_validation_error(
-                "CSV_UNMAPPED_LAB_CODE", "test_code",
-                f"test_code '{test_code}' (test_name='{test_name}') has no LOINC mapping; "
-                f"entry written to terminology_unmapped_codes",
-                ECW_LABS_FILE, result_id, test_code, pipeline_run_id,
-            ))
-            csv_unmapped_rows.append(_unmapped_row(
-                source_code=test_code,
-                source_display=test_name,
-                target_system="LOINC",
-                source_system="eClinicalWorks",
-                record_type="observation",
-                source_record_id=result_id,
-                run_id=pipeline_run_id,
-                now_ts=now_ts_lab,
-            ))
-
-csv_labs_completed = datetime.now(timezone.utc).replace(tzinfo=None)
-csv_validation_errs.extend(csv_lab_val_errs)
-
-print(f"ECW lab rows processed  : {len(csv_obs_rows) + len(csv_unmapped_rows):,}")
-print(f"LOINC-mapped            : {len(csv_obs_rows):,}")
-print(f"LOINC-unmapped          : {len(csv_unmapped_rows):,}")
-print(f"Text result values      : {sum(1 for r in csv_obs_rows if r['value_quantity'] is None):,}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Step CSV-4 — Write ECW lab rows to Silver
-
-# COMMAND ----------
-
-if csv_obs_rows:
-    obs_csv_df = spark.createDataFrame(csv_obs_rows, schema=CLINICAL_OBSERVATIONS_SCHEMA)
-    obs_csv_df.write.format("delta").mode("append").insertInto(TBL_CLINICAL_OBS)
-    print(f"Wrote {obs_csv_df.count():,} ECW observation row(s) to {TBL_CLINICAL_OBS}")
-
-all_unmapped = fhir_unmapped_rows + csv_unmapped_rows
-if csv_unmapped_rows:
-    unmapped_csv_df = spark.createDataFrame(csv_unmapped_rows, schema=TERMINOLOGY_UNMAPPED_CODES_SCHEMA)
-    unmapped_csv_df.write.format("delta").mode("append").insertInto(TBL_UNMAPPED)
-    print(f"Wrote {len(csv_unmapped_rows)} ECW unmapped code(s) to {TBL_UNMAPPED}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Step CSV-5 — Write validation errors and audit log
-
-# COMMAND ----------
-
-if csv_validation_errs:
-    val_df_csv = spark.createDataFrame(csv_validation_errs, schema=AUDIT_VALIDATION_ERRORS_SCHEMA)
-    val_df_csv.write.format("delta").mode("append").insertInto(BRONZE_VALIDATION_TABLE)
-    print(f"Wrote {val_df_csv.count():,} CSV validation error(s) to {BRONZE_VALIDATION_TABLE}")
-else:
-    print("No CSV validation errors")
-
-csv_audit_entries = [
-    {
-        "log_id":           str(uuid.uuid4()),
-        "pipeline_run_id":  pipeline_run_id,
-        "ingestion_path":   "csv",
-        "source_table":     TBL_CLINICAL_PATIENTS,
-        "record_count":     len(csv_patient_rows),
-        "pass_count":       len(csv_patient_rows),
-        "error_count":      0,
-        "tenant_id":        TENANT_ID,
-        "run_started_at":   csv_patients_started,
-        "run_completed_at": csv_patients_completed,
-        "logged_at":        datetime.now(timezone.utc).replace(tzinfo=None),
-    },
-    {
-        "log_id":           str(uuid.uuid4()),
-        "pipeline_run_id":  pipeline_run_id,
-        "ingestion_path":   "csv",
-        "source_table":     TBL_CLINICAL_CONDITIONS,
-        "record_count":     len(csv_condition_rows),
-        "pass_count":       len(csv_condition_rows),
-        "error_count":      0,
-        "tenant_id":        TENANT_ID,
-        "run_started_at":   csv_patients_started,
-        "run_completed_at": csv_patients_completed,
-        "logged_at":        datetime.now(timezone.utc).replace(tzinfo=None),
-    },
-    {
-        "log_id":           str(uuid.uuid4()),
-        "pipeline_run_id":  pipeline_run_id,
-        "ingestion_path":   "csv",
-        "source_table":     TBL_CLINICAL_OBS,
-        "record_count":     len(csv_obs_rows) + len(csv_unmapped_rows),
-        "pass_count":       len(csv_obs_rows),
-        "error_count":      len(csv_unmapped_rows),
-        "tenant_id":        TENANT_ID,
-        "run_started_at":   csv_labs_started,
-        "run_completed_at": csv_labs_completed,
-        "logged_at":        datetime.now(timezone.utc).replace(tzinfo=None),
-    },
-]
-
-audit_df_csv = spark.createDataFrame(csv_audit_entries, schema=AUDIT_INGEST_LOG_SCHEMA)
-audit_df_csv.write.format("delta").mode("append").insertInto(BRONZE_AUDIT_TABLE)
-print(f"CSV audit entries written to {BRONZE_AUDIT_TABLE}")
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## Summary
 
 # COMMAND ----------
 
-total_mpi        = len(fhir_mpi_rows) + len(csv_mpi_rows)
-total_xwalk      = len(fhir_xwalk_rows) + len(csv_xwalk_rows)
-total_patients   = len(fhir_patient_rows) + len(csv_patient_rows)
+total_mpi        = len(fhir_mpi_rows)
+total_xwalk      = len(fhir_xwalk_rows)
+total_patients   = len(fhir_patient_rows)
 total_encounters = len(fhir_encounter_rows) + len(hl7_encounter_rows)
-total_conditions = len(fhir_condition_rows) + len(hl7_condition_rows) + len(csv_condition_rows)
-total_obs        = len(fhir_obs_rows) + len(csv_obs_rows)
-total_unmapped   = len(fhir_unmapped_rows) + len(csv_unmapped_rows)
+total_conditions = len(fhir_condition_rows) + len(hl7_condition_rows)
+total_obs        = len(fhir_obs_rows)
+total_unmapped   = len(fhir_unmapped_rows)
 
 print("=" * 60)
 print(f"Bronze → Silver complete  |  pipeline_run_id: {pipeline_run_id}")
@@ -1773,10 +1345,9 @@ print(f"  clinical_patients       : {total_patients} row(s)")
 print(f"  clinical_encounters     : {total_encounters} row(s)  "
       f"(FHIR={len(fhir_encounter_rows)}  HL7={len(hl7_encounter_rows)})")
 print(f"  clinical_conditions     : {total_conditions} row(s)  "
-      f"(FHIR={len(fhir_condition_rows)}  HL7={len(hl7_condition_rows)}  CSV={len(csv_condition_rows)})")
+      f"(FHIR={len(fhir_condition_rows)}  HL7={len(hl7_condition_rows)})")
 print(f"  clinical_observations   : {total_obs} row(s) (mapped only)")
 print(f"  terminology_unmapped    : {total_unmapped} code(s)")
-print(f"  validation_errors       : {len(csv_validation_errs)} CSV DQ issue(s)")
 
 # COMMAND ----------
 

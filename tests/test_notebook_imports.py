@@ -50,6 +50,9 @@ class TestNotebookImports:
         assert hasattr(mod, "MPI_PATIENT_INDEX_SCHEMA")
         assert hasattr(mod, "CLINICAL_PATIENTS_SCHEMA")
         assert hasattr(mod, "CLINICAL_OBSERVATIONS_SCHEMA")
+        assert not hasattr(mod, "ECW_PATIENTS_FILE"), "ECW_PATIENTS_FILE must not exist in nb03 (moved to nb06)"
+        assert not hasattr(mod, "ECW_LABS_FILE"), "ECW_LABS_FILE must not exist in nb03 (moved to nb06)"
+        assert not hasattr(mod, "ECW_IDENTIFIER_SYSTEM"), "ECW_IDENTIFIER_SYSTEM must not exist in nb03 (moved to nb06)"
 
     def test_nb04_silver_to_gold_loads(self):
         mod = _load("04_silver_to_gold.py")
@@ -62,3 +65,26 @@ class TestNotebookImports:
         assert hasattr(mod, "CSV_BATCHES_SCHEMA")
         assert hasattr(mod, "VALIDATION_SCHEMA")
         assert hasattr(mod, "AUDIT_INGEST_LOG_SCHEMA")
+
+    def test_nb06_bronze_to_silver_csv_loads(self):
+        mod = _load("06_bronze_to_silver_csv.py")
+        assert hasattr(mod, "MPI_PATIENT_INDEX_SCHEMA")
+        assert hasattr(mod, "MPI_IDENTITY_CROSSWALK_SCHEMA")
+        assert hasattr(mod, "CLINICAL_PATIENTS_SCHEMA")
+        assert hasattr(mod, "CLINICAL_OBSERVATIONS_SCHEMA")
+        assert hasattr(mod, "CLINICAL_CONDITIONS_SCHEMA")
+        assert hasattr(mod, "TERMINOLOGY_UNMAPPED_CODES_SCHEMA")
+        assert hasattr(mod, "AUDIT_VALIDATION_ERRORS_SCHEMA")
+        assert hasattr(mod, "AUDIT_INGEST_LOG_SCHEMA")
+
+    def test_nb07_silver_to_gold_csv_loads(self):
+        from pyspark.sql.types import StructType
+        mod = _load("07_silver_to_gold_csv.py")
+        schema_attrs = [
+            name for name, val in vars(mod).items()
+            if isinstance(val, StructType)
+        ]
+        assert schema_attrs == [], (
+            f"07_silver_to_gold_csv.py must not define StructType schema constants "
+            f"(orchestration wrapper only); found: {schema_attrs}"
+        )
