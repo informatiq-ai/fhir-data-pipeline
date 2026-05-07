@@ -113,7 +113,7 @@ CSV_BATCHES_SCHEMA = StructType([
 ])
 
 # ── audit_validation_errors (dev.fhir_bronze.audit_validation_errors) ─────────
-VALIDATION_SCHEMA = StructType([
+AUDIT_VALIDATION_ERRORS_SCHEMA = StructType([
     StructField("error_id",          StringType(),    False),  # NOT NULL
     StructField("pipeline_run_id",   StringType(),    True),
     StructField("ingestion_path",    StringType(),    True),
@@ -128,6 +128,7 @@ VALIDATION_SCHEMA = StructType([
     StructField("review_outcome",    StringType(),    True),
     StructField("created_at",        TimestampType(), False),  # NOT NULL
 ])
+VALIDATION_SCHEMA = AUDIT_VALIDATION_ERRORS_SCHEMA  # alias — tests/test_contracts.py checks this name
 
 # ── audit_ingest_log (dev.fhir_bronze.audit_ingest_log) ───────────────────────
 AUDIT_INGEST_LOG_SCHEMA = StructType([
