@@ -100,6 +100,9 @@ else:
     bronze_filter = "1=1"
     print("No upstream run ID — processing all Bronze FHIR bundles")
 
+dbutils.widgets.text("full_refresh", "false", "Truncate Silver tables before run")
+full_refresh = dbutils.widgets.get("full_refresh").strip().lower()
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -360,16 +363,16 @@ print("Silver tables verified")
 
 # COMMAND ----------
 
-if TGT_CATALOG == "dev":
+if full_refresh == "true":
     spark.sql(f"TRUNCATE TABLE {TBL_MPI_PATIENTS}")
     spark.sql(f"TRUNCATE TABLE {TBL_MPI_XWALK}")
     spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_PATIENTS}")
     spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_ENCOUNTERS}")
     spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_CONDITIONS}")
     spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_OBS}")
-    print("Silver tables truncated (dev mode only)")
+    print("Silver tables truncated (full_refresh=true)")
 else:
-    print(f"Truncate skipped — catalog is '{TGT_CATALOG}' (dev-only operation)")
+    print(f"Truncate skipped — full_refresh='{full_refresh}' (set widget to 'true' to truncate)")
 
 # COMMAND ----------
 
@@ -508,7 +511,7 @@ def _to_float(s):
 
 
 def _unmapped_row(source_code, source_display, target_system, source_system,
-                  record_type, source_record_id, run_id, now_ts):
+                  record_type, source_record_id, run_id, now_ts, tenant_id):
     """Build a terminology_unmapped_codes row matching the DDL schema exactly."""
     return {
         "unmapped_id":       str(uuid.uuid4()),
@@ -518,7 +521,7 @@ def _unmapped_row(source_code, source_display, target_system, source_system,
         "source_system":     source_system,
         "record_type":       record_type,
         "source_record_id":  source_record_id,
-        "tenant_id":         TENANT_ID,                   # NOT NULL
+        "tenant_id":         tenant_id,                   # NOT NULL — per-record value
         "pipeline_run_id":   run_id,
         "logged_at":         now_ts,                      # NOT NULL
         "resolved":          False,
@@ -595,7 +598,7 @@ for rec in by_type.get("Patient", []):
 
     identity = fhir_patient_to_identity(
         resource=resource,
-        tenant_id=TENANT_ID,
+        tenant_id=rec["tenant_id"],
         source_table=BRONZE_FHIR_TABLE,
         source_id=source_rec_id,
     )
@@ -615,7 +618,7 @@ for rec in by_type.get("Patient", []):
             "first_resolved_at":   now_ts,
             "last_updated_at":     now_ts,
             "linked_record_count": 1,
-            "tenant_ids":          [TENANT_ID],
+            "tenant_ids":          [rec["tenant_id"]],
             "is_merged":           False,
             "merged_into_umpi":    None,
         })
@@ -625,7 +628,7 @@ for rec in by_type.get("Patient", []):
         "crosswalk_id":    str(uuid.uuid4()),
         "umpi":            result.umpi,
         "source_mrn":      identity.source_mrn or fhir_id,
-        "tenant_id":       TENANT_ID,
+        "tenant_id":       rec["tenant_id"],
         "source_system":   "FHIR_R4",
         "facility_id":     identity.source_facility_npi,
         "match_confidence": result.match_confidence,
@@ -662,7 +665,7 @@ for rec in by_type.get("Patient", []):
         "zip":                addr.get("postalCode") or patient_rec.get("postal_code"),
         "phone":              phone,
         "email":              email,
-        "tenant_id":          TENANT_ID,
+        "tenant_id":          rec["tenant_id"],
         "source_system":      "FHIR_R4",
         "source_record_id":   source_rec_id,
         "created_at":         now_ts,
@@ -924,7 +927,7 @@ for rec in by_type.get("Observation", []):
     # normalize_fhir_observation returns (SilverLabRecord, norm_log_entries)
     silver_rec, _ = normalize_fhir_observation(
         resource=resource,
-        tenant_id=TENANT_ID,
+        tenant_id=rec["tenant_id"],
         umpi=umpi,
         source_id=source_rec_id,
         terminology=terminology,
@@ -949,7 +952,7 @@ for rec in by_type.get("Observation", []):
             "interpretation":        silver_rec.interpretation_code,
             "observation_datetime":  _parse_obs_datetime(silver_rec.effective_datetime),
             "status":                silver_rec.observation_status,
-            "tenant_id":             TENANT_ID,
+            "tenant_id":             rec["tenant_id"],
             "source_system":         "FHIR_R4",
             "source_code":           silver_rec.source_code,
             "source_record_id":      source_rec_id,
@@ -967,6 +970,7 @@ for rec in by_type.get("Observation", []):
             source_record_id=source_rec_id,
             run_id=pipeline_run_id,
             now_ts=now_ts,
+            tenant_id=rec["tenant_id"],
         ))
 
     print(f"  Observation {fhir_id}  →  loinc={silver_rec.loinc_code}  "
@@ -1050,7 +1054,7 @@ for rec in by_type.get("Encounter", []):
         "facility_id":            facility_id,
         "attending_provider_npi": None,
         "principal_icd10":        None,
-        "tenant_id":              TENANT_ID,
+        "tenant_id":              rec["tenant_id"],
         "source_system":          "FHIR_R4",
         "source_record_id":       source_rec_id,
         "created_at":             now_ts,
@@ -1120,7 +1124,7 @@ for rec in by_type.get("Condition", []):
         "abatement_datetime":   abatement_dt,
         "clinical_status":      clin_status,
         "verification_status":  verif_status,
-        "tenant_id":            TENANT_ID,
+        "tenant_id":            rec["tenant_id"],
         "source_system":        "FHIR_R4",
         "source_code":          icd10_code,
         "source_record_id":     source_rec_id,
@@ -1156,7 +1160,7 @@ else:
 # COMMAND ----------
 
 hl7_adt_rows = spark.sql(f"""
-    SELECT message_id, raw_payload, message_event, source_facility
+    SELECT message_id, tenant_id, raw_payload, message_event, source_facility
     FROM {BRONZE_HL7_TABLE}
     WHERE message_type = 'ADT'
       AND message_event IN ('A01', 'A03')
@@ -1198,7 +1202,7 @@ for row in hl7_adt_rows:
     identity = PatientIdentity(
         source_id=source_rec_id,
         source_table=BRONZE_HL7_TABLE,
-        tenant_id=TENANT_ID,
+        tenant_id=row["tenant_id"],
         family_name=last_name or None,
         given_name=first_name or None,
         birth_date=dob_date,
@@ -1263,7 +1267,7 @@ for row in hl7_adt_rows:
         "facility_id":            enc_facility,
         "attending_provider_npi": att_npi or None,
         "principal_icd10":        principal_icd10,
-        "tenant_id":              TENANT_ID,
+        "tenant_id":              row["tenant_id"],
         "source_system":          "HL7_V2",
         "source_record_id":       source_rec_id,
         "created_at":             now_ts_hl7,
@@ -1283,7 +1287,7 @@ for row in hl7_adt_rows:
             "abatement_datetime":   None,
             "clinical_status":      clin_status,
             "verification_status":  "confirmed",
-            "tenant_id":            TENANT_ID,
+            "tenant_id":            row["tenant_id"],
             "source_system":        "HL7_V2",
             "source_code":          principal_icd10,
             "source_record_id":     source_rec_id,
