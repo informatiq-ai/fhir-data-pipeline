@@ -35,7 +35,8 @@ from datetime import datetime, timezone
 # ── pipeline_run_id: generated once per notebook execution ────────────────────
 pipeline_run_id = str(uuid.uuid4())
 
-TENANT_ID         = "INTEGRIS_BAPTIST"
+dbutils.widgets.text("tenant_id", "INTEGRIS_BAPTIST", "Tenant ID")
+TENANT_ID         = dbutils.widgets.get("tenant_id")
 CATALOG           = "dev"
 SCHEMA            = "fhir_bronze"
 TARGET_TABLE      = f"{CATALOG}.{SCHEMA}.ingest_fhir_bundles"
@@ -44,6 +45,7 @@ VALIDATION_TABLE  = f"{CATALOG}.{SCHEMA}.audit_validation_errors"
 INGESTION_VERSION = "1.0.0"
 
 print(f"pipeline_run_id  : {pipeline_run_id}")
+print(f"tenant_id        : {TENANT_ID}")
 print(f"target_table     : {TARGET_TABLE}")
 print(f"audit_table      : {AUDIT_TABLE}")
 print(f"validation_table : {VALIDATION_TABLE}")
