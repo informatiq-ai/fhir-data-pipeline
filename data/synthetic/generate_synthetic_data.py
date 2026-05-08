@@ -42,6 +42,13 @@ SEED = 42
 PATIENT_COUNT = 500
 OUTPUT_DIR = Path(__file__).parent
 
+# Import the canonical tenant tag system URI from fhir_ingester so meta.tag
+# stays in sync with extract_tenant_from_meta() without duplicating the string.
+_repo_root = str(OUTPUT_DIR.parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+from ingestion.fhir_ingester import TENANT_TAG_SYSTEM  # noqa: E402
+
 TENANT_POOL = ["INTEGRIS_BAPTIST", "OU_HEALTH", "MERCY_OKC", "ST_FRANCIS_TULSA"]
 TENANT_WEIGHTS = [0.40, 0.25, 0.20, 0.15]
 
@@ -791,7 +798,7 @@ def generate_fhir_bundles(patients: list[Patient], rng: random.Random) -> str:
             meta = {
                 "tag": [
                     {
-                        "system": "https://oklahoma-hdu.gov/tenant",
+                        "system": TENANT_TAG_SYSTEM,
                         "code": tenant,
                         "display": tenant,
                     }
@@ -875,6 +882,7 @@ def generate_ecw_patients(patients: list[Patient], rng: random.Random) -> list[d
             "insurance_id":   rng.choice(ins_pool),
             "last_visit_date":last_visit,
             "primary_dx_icd10": icd10,
+            "tenant_id":      patient.tenant_id,
         })
 
     # Rows 15-19 are DQ: exact duplicates of rows 0-4 (appended at end)
@@ -1230,7 +1238,7 @@ def main():
     ecw_pat_fields = [
         "patient_id", "first_name", "last_name", "dob", "gender", "ssn_last4",
         "address", "city", "state", "zip", "phone", "pcp_npi",
-        "insurance_id", "last_visit_date", "primary_dx_icd10",
+        "insurance_id", "last_visit_date", "primary_dx_icd10", "tenant_id",
     ]
     with open(ecw_pat_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=ecw_pat_fields)
