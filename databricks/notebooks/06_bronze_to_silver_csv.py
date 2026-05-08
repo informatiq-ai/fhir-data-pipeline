@@ -352,7 +352,7 @@ print(f"  _mrn_npi_index         : {len(mpi._mrn_npi_index)}")
 # COMMAND ----------
 
 csv_batch_rows = spark.sql(f"""
-    SELECT batch_id, source_system, raw_payload, pipeline_run_id AS bronze_run_id
+    SELECT batch_id, tenant_id, source_system, raw_payload, pipeline_run_id AS bronze_run_id
     FROM {BRONZE_CSV_TABLE}
     WHERE {csv_filter}
 """).collect()
@@ -398,7 +398,7 @@ def _to_float(s):
 
 
 def _unmapped_row(source_code, source_display, target_system, source_system,
-                  record_type, source_record_id, run_id, now_ts):
+                  record_type, source_record_id, run_id, now_ts, tenant_id):
     """Build a terminology_unmapped_codes row matching the DDL schema exactly."""
     return {
         "unmapped_id":       str(uuid.uuid4()),
@@ -408,7 +408,7 @@ def _unmapped_row(source_code, source_display, target_system, source_system,
         "source_system":     source_system,
         "record_type":       record_type,
         "source_record_id":  source_record_id,
-        "tenant_id":         TENANT_ID,                   # NOT NULL
+        "tenant_id":         tenant_id,                   # NOT NULL — per-record value
         "pipeline_run_id":   run_id,
         "logged_at":         now_ts,                      # NOT NULL
         "resolved":          False,
@@ -419,7 +419,7 @@ def _unmapped_row(source_code, source_display, target_system, source_system,
     }
 
 
-def _csv_validation_error(code, field, detail, row_id, raw_val, run_id):
+def _csv_validation_error(code, field, detail, row_id, raw_val, run_id, tenant_id):
     return {
         "error_id":         str(uuid.uuid4()),
         "pipeline_run_id":  run_id,
@@ -428,7 +428,7 @@ def _csv_validation_error(code, field, detail, row_id, raw_val, run_id):
         "error_code":       code,
         "error_message":    f"{field}: {detail}",
         "raw_payload":      str(raw_val) if raw_val is not None else None,
-        "tenant_id":        TENANT_ID,
+        "tenant_id":        tenant_id,                    # per-record value
         "requires_review":  True,
         "reviewed_at":      None,
         "reviewed_by":      None,
@@ -460,6 +460,7 @@ seen_patient_ids    = {}    # duplicate detection
 csv_patients_started = datetime.now(timezone.utc).replace(tzinfo=None)
 
 if patients_batch:
+    patients_tenant_id = patients_batch["tenant_id"]
     raw_payload = patients_batch["raw_payload"]
     reader = csv.DictReader(io.StringIO(raw_payload))
     for row_idx, row in enumerate(reader):
@@ -481,13 +482,13 @@ if patients_batch:
             csv_validation_errs.append(_csv_validation_error(
                 "CSV_BLANK_NAME", "first_name",
                 "first_name is blank; MPI name-based passes may degrade",
-                patient_id, first_name, pipeline_run_id,
+                patient_id, first_name, pipeline_run_id, patients_tenant_id,
             ))
         if not last_name:
             csv_validation_errs.append(_csv_validation_error(
                 "CSV_BLANK_NAME", "last_name",
                 "last_name is blank; MPI name-based passes may degrade",
-                patient_id, last_name, pipeline_run_id,
+                patient_id, last_name, pipeline_run_id, patients_tenant_id,
             ))
 
         # DQ: malformed DOB
@@ -495,7 +496,7 @@ if patients_batch:
             csv_validation_errs.append(_csv_validation_error(
                 "CSV_MALFORMED_DOB", "dob",
                 "DOB is not in ISO 8601 format (expected YYYY-MM-DD); date_of_birth set to NULL",
-                patient_id, raw_dob, pipeline_run_id,
+                patient_id, raw_dob, pipeline_run_id, patients_tenant_id,
             ))
 
         # DQ: duplicate row
@@ -504,7 +505,7 @@ if patients_batch:
                 "CSV_DUPLICATE_ROW", "patient_id",
                 f"Duplicate patient_id first seen at row {seen_patient_ids[patient_id]}; "
                 f"MPI will return same UMPI (DETERMINISTIC match)",
-                patient_id, patient_id, pipeline_run_id,
+                patient_id, patient_id, pipeline_run_id, patients_tenant_id,
             ))
         else:
             seen_patient_ids[patient_id] = row_idx
@@ -513,7 +514,7 @@ if patients_batch:
         identity = PatientIdentity(
             source_id=patient_id,
             source_table=BRONZE_CSV_TABLE,
-            tenant_id=TENANT_ID,
+            tenant_id=patients_tenant_id,
             family_name=last_name or None,
             given_name=first_name or None,
             birth_date=dob_date,
@@ -535,7 +536,7 @@ if patients_batch:
                 "first_resolved_at":   now_ts_csv,
                 "last_updated_at":     now_ts_csv,
                 "linked_record_count": 1,
-                "tenant_ids":          [TENANT_ID],
+                "tenant_ids":          [patients_tenant_id],
                 "is_merged":           False,
                 "merged_into_umpi":    None,
             })
@@ -545,7 +546,7 @@ if patients_batch:
             "crosswalk_id":     str(uuid.uuid4()),
             "umpi":             result.umpi,
             "source_mrn":       patient_id,
-            "tenant_id":        TENANT_ID,
+            "tenant_id":        patients_tenant_id,
             "source_system":    "eClinicalWorks",
             "facility_id":      pcp_npi,
             "match_confidence": result.match_confidence,
@@ -558,7 +559,7 @@ if patients_batch:
             csv_validation_errs.append(_csv_validation_error(
                 "CSV_INVALID_ICD10", "primary_dx_icd10",
                 f"ICD-10 code '{primary_dx}' has no SNOMED mapping; written as-is",
-                patient_id, primary_dx, pipeline_run_id,
+                patient_id, primary_dx, pipeline_run_id, patients_tenant_id,
             ))
 
         # clinical_conditions: primary diagnosis — written as-is regardless of SNOMED mapping
@@ -574,7 +575,7 @@ if patients_batch:
                 "abatement_datetime":   None,
                 "clinical_status":      "active",
                 "verification_status":  "confirmed",
-                "tenant_id":            TENANT_ID,
+                "tenant_id":            patients_tenant_id,
                 "source_system":        "eClinicalWorks",
                 "source_code":          primary_dx,
                 "source_record_id":     patient_id,
@@ -600,7 +601,7 @@ if patients_batch:
             "zip":                zip_code,
             "phone":              row["phone"].strip() or None,
             "email":              None,
-            "tenant_id":          TENANT_ID,
+            "tenant_id":          patients_tenant_id,
             "source_system":      "eClinicalWorks",
             "source_record_id":   patient_id,
             "created_at":         now_ts_csv,
@@ -669,6 +670,7 @@ csv_lab_val_errs  = []   # collected here, appended to csv_validation_errs below
 csv_labs_started = datetime.now(timezone.utc).replace(tzinfo=None)
 
 if labs_batch:
+    labs_tenant_id = labs_batch["tenant_id"]
     raw_payload = labs_batch["raw_payload"]
     reader = csv.DictReader(io.StringIO(raw_payload))
     for row in reader:
@@ -710,7 +712,7 @@ if labs_batch:
             csv_lab_val_errs.append(_csv_validation_error(
                 "CSV_TEXT_RESULT_VALUE", "result_value",
                 f"result_value '{raw_value}' cannot be parsed as float; value_quantity=NULL",
-                result_id, raw_value, pipeline_run_id,
+                result_id, raw_value, pipeline_run_id, labs_tenant_id,
             ))
 
         # observation_datetime from collection_date (date → midnight timestamp)
@@ -738,7 +740,7 @@ if labs_batch:
                 "interpretation":        abnormal,
                 "observation_datetime":  obs_dt,
                 "status":                status,
-                "tenant_id":             TENANT_ID,
+                "tenant_id":             labs_tenant_id,
                 "source_system":         "eClinicalWorks",
                 "source_code":           test_code,
                 "source_record_id":      result_id,
@@ -750,7 +752,7 @@ if labs_batch:
                 "CSV_UNMAPPED_LAB_CODE", "test_code",
                 f"test_code '{test_code}' (test_name='{test_name}') has no LOINC mapping; "
                 f"entry written to terminology_unmapped_codes",
-                result_id, test_code, pipeline_run_id,
+                result_id, test_code, pipeline_run_id, labs_tenant_id,
             ))
             csv_unmapped_rows.append(_unmapped_row(
                 source_code=test_code,
@@ -761,6 +763,7 @@ if labs_batch:
                 source_record_id=result_id,
                 run_id=pipeline_run_id,
                 now_ts=now_ts_lab,
+                tenant_id=labs_tenant_id,
             ))
 
 csv_labs_completed = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -817,7 +820,7 @@ if patients_batch:
         "record_count":     len(csv_patient_rows),
         "pass_count":       len(csv_patient_rows),
         "error_count":      0,
-        "tenant_id":        TENANT_ID,
+        "tenant_id":        patients_batch["tenant_id"],
         "run_started_at":   csv_patients_started,
         "run_completed_at": csv_patients_completed,
         "logged_at":        datetime.now(timezone.utc).replace(tzinfo=None),
@@ -830,7 +833,7 @@ if patients_batch:
         "record_count":     len(csv_condition_rows),
         "pass_count":       len(csv_condition_rows),
         "error_count":      0,
-        "tenant_id":        TENANT_ID,
+        "tenant_id":        patients_batch["tenant_id"],
         "run_started_at":   csv_patients_started,
         "run_completed_at": csv_patients_completed,
         "logged_at":        datetime.now(timezone.utc).replace(tzinfo=None),
@@ -845,7 +848,7 @@ if labs_batch:
         "record_count":     len(csv_obs_rows) + len(csv_unmapped_rows),
         "pass_count":       len(csv_obs_rows),
         "error_count":      len(csv_unmapped_rows),
-        "tenant_id":        TENANT_ID,
+        "tenant_id":        labs_batch["tenant_id"],
         "run_started_at":   csv_labs_started,
         "run_completed_at": csv_labs_completed,
         "logged_at":        datetime.now(timezone.utc).replace(tzinfo=None),
