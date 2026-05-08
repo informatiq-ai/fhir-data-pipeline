@@ -256,8 +256,9 @@ def build_a01(
     override_dob: Optional[str] = None,
     override_gender: Optional[str] = None,
     override_facility: Optional[str] = None,
+    override_tenant: Optional[str] = None,
 ) -> str:
-    tenant = patient.tenant_id
+    tenant = override_tenant if override_tenant is not None else patient.tenant_id
     app = SENDING_APP[tenant]
     facility = override_facility if override_facility is not None else tenant
     ts = hl7_ts(admit_dt)
@@ -301,8 +302,10 @@ def build_a03(
     msg_ctrl: str,
     batch_id: str,
     rng: random.Random,
+    *,
+    override_tenant: Optional[str] = None,
 ) -> str:
-    tenant = patient.tenant_id
+    tenant = override_tenant if override_tenant is not None else patient.tenant_id
     app = SENDING_APP[tenant]
     ts = hl7_ts(discharge_dt)
     dispo = rng.choice(DISCHARGE_DISPOS)
@@ -363,6 +366,9 @@ def generate_hl7_adt(patients: list[Patient], rng: random.Random) -> str:
         msg_ctrl_a03 = f"MSG{hl7_ts(discharge_dt)}{i+1:06d}A03"
         batch_id = f"ADT-BATCH-2024-{i+1:05d}"
 
+        # Even tenant distribution: 250 messages per tenant (125 patients × 2 msg each)
+        tenant_override = TENANT_POOL[i % 4]
+
         # Apply DQ overrides for A01
         override_name     = None
         override_dob      = None
@@ -389,13 +395,15 @@ def generate_hl7_adt(patients: list[Patient], rng: random.Random) -> str:
                 override_dob=override_dob,
                 override_gender=override_gender,
                 override_facility=override_facility,
+                override_tenant=tenant_override,
             )
             messages.append(a01)
             if i < 10:
                 first_ten_a01.append(a01)
 
         # A03 discharge (always clean)
-        a03 = build_a03(patient, discharge_dt, visit_num, msg_ctrl_a03, batch_id, rng)
+        a03 = build_a03(patient, discharge_dt, visit_num, msg_ctrl_a03, batch_id, rng,
+                        override_tenant=tenant_override)
         messages.append(a03)
 
     return "\n\n".join(messages) + "\n"
@@ -688,7 +696,7 @@ def generate_fhir_bundles(patients: list[Patient], rng: random.Random) -> str:
         bundle_id = str(uuid.uuid4())
         patient_fhir_id = f"patient-{patient.patient_id:05d}"
         enc_fhir_id = f"encounter-{i+1:05d}"
-        tenant = patient.tenant_id
+        tenant = TENANT_POOL[i % 4]  # even distribution: 125 bundles per tenant
 
         offset_days = rng.randint(0, 330)
         admit_dt = visit_base + timedelta(days=offset_days, hours=rng.randint(6, 20))
