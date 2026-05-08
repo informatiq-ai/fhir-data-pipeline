@@ -39,7 +39,8 @@ from datetime import datetime, timezone, date
 # ── pipeline_run_id: generated once per notebook execution ────────────────────
 pipeline_run_id = str(uuid.uuid4())
 
-TENANT_ID          = "INTEGRIS_BAPTIST"
+dbutils.widgets.text("tenant_id", "INTEGRIS_BAPTIST", "Tenant ID")
+TENANT_ID          = dbutils.widgets.get("tenant_id")
 SRC_CATALOG        = "dev"
 SRC_SCHEMA         = "fhir_bronze"
 TGT_CATALOG        = "dev"
@@ -60,6 +61,7 @@ TBL_UNMAPPED             = f"{TGT_CATALOG}.{TGT_SCHEMA}.terminology_unmapped_cod
 ECW_IDENTIFIER_SYSTEM = "urn:system:eclinicalworks"
 
 print(f"pipeline_run_id : {pipeline_run_id}")
+print(f"tenant_id       : {TENANT_ID}")
 print(f"source          : {BRONZE_CSV_TABLE}")
 print(f"target catalog  : {TGT_CATALOG}.{TGT_SCHEMA}")
 
