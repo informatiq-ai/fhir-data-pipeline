@@ -100,9 +100,6 @@ else:
     bronze_filter = "1=1"
     print("No upstream run ID — processing all Bronze FHIR bundles")
 
-dbutils.widgets.text("full_refresh", "false", "Truncate Silver tables before run")
-full_refresh = dbutils.widgets.get("full_refresh").strip().lower()
-
 # COMMAND ----------
 
 # MAGIC %md
@@ -352,27 +349,6 @@ spark.sql(f"""
 """)
 
 print("Silver tables verified")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Truncate stale data (development only)
-# MAGIC
-# MAGIC Comment out in production — Silver tables accumulate across runs and the MPI
-# MAGIC seeding step handles idempotency.
-
-# COMMAND ----------
-
-if full_refresh == "true":
-    spark.sql(f"TRUNCATE TABLE {TBL_MPI_PATIENTS}")
-    spark.sql(f"TRUNCATE TABLE {TBL_MPI_XWALK}")
-    spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_PATIENTS}")
-    spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_ENCOUNTERS}")
-    spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_CONDITIONS}")
-    spark.sql(f"TRUNCATE TABLE {TBL_CLINICAL_OBS}")
-    print("Silver tables truncated (full_refresh=true)")
-else:
-    print(f"Truncate skipped — full_refresh='{full_refresh}' (set widget to 'true' to truncate)")
 
 # COMMAND ----------
 
