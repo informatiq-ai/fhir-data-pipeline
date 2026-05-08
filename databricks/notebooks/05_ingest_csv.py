@@ -43,7 +43,8 @@ from datetime import datetime, timezone
 # ── pipeline_run_id: generated once per notebook execution ────────────────────
 pipeline_run_id = str(uuid.uuid4())
 
-TENANT_ID       = "INTEGRIS_BAPTIST"
+dbutils.widgets.text("tenant_id", "INTEGRIS_BAPTIST", "Tenant ID")
+TENANT_ID       = dbutils.widgets.get("tenant_id")
 CATALOG         = "dev"
 BRONZE_SCHEMA   = "fhir_bronze"
 TARGET_TABLE    = f"{CATALOG}.{BRONZE_SCHEMA}.ingest_csv_batches"
@@ -52,6 +53,7 @@ VALIDATION_TABLE = f"{CATALOG}.{BRONZE_SCHEMA}.audit_validation_errors"
 NOTEBOOK_NAME   = "05_ingest_csv"
 
 print(f"pipeline_run_id  : {pipeline_run_id}")
+print(f"tenant_id        : {TENANT_ID}")
 print(f"target_table     : {TARGET_TABLE}")
 print(f"audit_table      : {AUDIT_TABLE}")
 print(f"validation_table : {VALIDATION_TABLE}")
@@ -290,6 +292,17 @@ with open(ECW_PATIENTS_FILE, newline="", encoding="utf-8") as fh:
     raw_patients_content = fh.read()
 
 patients_file_size = os.path.getsize(ECW_PATIENTS_FILE)
+
+_pat_tenant_ids = {
+    r.get("tenant_id", "").strip()
+    for r in csv.DictReader(io.StringIO(raw_patients_content))
+    if r.get("tenant_id", "").strip()
+}
+patients_derived_tenant = (
+    next(iter(_pat_tenant_ids)) if len(_pat_tenant_ids) == 1
+    else "MULTI" if _pat_tenant_ids
+    else TENANT_ID
+)
 patients_total_rows = 0
 
 reader = csv.DictReader(io.StringIO(raw_patients_content))
@@ -368,6 +381,17 @@ with open(ECW_LABS_FILE, newline="", encoding="utf-8") as fh:
     raw_labs_content = fh.read()
 
 labs_file_size = os.path.getsize(ECW_LABS_FILE)
+
+_lab_tenant_ids = {
+    r.get("tenant_id", "").strip()
+    for r in csv.DictReader(io.StringIO(raw_labs_content))
+    if r.get("tenant_id", "").strip()
+}
+labs_derived_tenant = (
+    next(iter(_lab_tenant_ids)) if len(_lab_tenant_ids) == 1
+    else "MULTI" if _lab_tenant_ids
+    else TENANT_ID
+)
 labs_total_rows = 0
 
 reader = csv.DictReader(io.StringIO(raw_labs_content))
@@ -432,7 +456,7 @@ batch_rows = [
         "file_name":         os.path.basename(ECW_PATIENTS_FILE),
         "file_size_bytes":   patients_file_size,
         "row_count":         patients_total_rows,
-        "tenant_id":         TENANT_ID,
+        "tenant_id":         patients_derived_tenant,
         "received_at":       patients_started,
         "validation_status": "ERROR" if patients_validation_errs else "PASS",
         "pipeline_run_id":   pipeline_run_id,
@@ -445,7 +469,7 @@ batch_rows = [
         "file_name":         os.path.basename(ECW_LABS_FILE),
         "file_size_bytes":   labs_file_size,
         "row_count":         labs_total_rows,
-        "tenant_id":         TENANT_ID,
+        "tenant_id":         labs_derived_tenant,
         "received_at":       labs_started,
         "validation_status": "ERROR" if labs_validation_errs else "PASS",
         "pipeline_run_id":   pipeline_run_id,
@@ -494,7 +518,7 @@ audit_entries = [
                                  e for e in patients_validation_errs
                                  if e["error_code"] == CSV_MISSING_REQUIRED_FIELD
                              ]),
-        "tenant_id":         TENANT_ID,
+        "tenant_id":         patients_derived_tenant,
         "run_started_at":    patients_started,
         "run_completed_at":  patients_completed,
         "logged_at":         datetime.now(timezone.utc).replace(tzinfo=None),
@@ -513,7 +537,7 @@ audit_entries = [
                                  e for e in labs_validation_errs
                                  if e["error_code"] == CSV_MISSING_REQUIRED_FIELD
                              ]),
-        "tenant_id":         TENANT_ID,
+        "tenant_id":         labs_derived_tenant,
         "run_started_at":    labs_started,
         "run_completed_at":  labs_completed,
         "logged_at":         datetime.now(timezone.utc).replace(tzinfo=None),
