@@ -31,6 +31,9 @@ from datetime import datetime, date, timezone
 # ── pipeline_run_id: generated once per notebook execution ────────────────────
 pipeline_run_id = str(uuid.uuid4())
 
+dbutils.widgets.text("tenant_id", "INTEGRIS_BAPTIST", "Tenant ID")
+TENANT_ID        = dbutils.widgets.get("tenant_id")
+
 SRC_CATALOG      = "dev"
 SRC_SCHEMA       = "fhir_silver"
 TGT_CATALOG      = "dev"
@@ -49,6 +52,7 @@ TBL_GOLD_ADT      = f"{TGT_CATALOG}.{TGT_SCHEMA}.analytics_adt_events"
 TBL_GOLD_USCDI    = f"{TGT_CATALOG}.{TGT_SCHEMA}.export_uscdi_v3_patient"
 
 print(f"pipeline_run_id : {pipeline_run_id}")
+print(f"tenant_id       : {TENANT_ID}")
 print(f"source          : {SRC_CATALOG}.{SRC_SCHEMA}")
 print(f"target          : {TGT_CATALOG}.{TGT_SCHEMA}")
 
